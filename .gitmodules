@@ -1,3 +1,12 @@
 [submodule "libnb-qemu-guest/bionic"]
 	path = libnb-qemu-guest/bionic
 	url = https://gitlab.com/android_translation_layer/qemu-based-native-bridge/nb-qemu-bionic.git
+[submodule "capstone"]
+	path = capstone
+	url = https://github.com/goffioul/ax86-nb-qemu-capstone.git
+[submodule "glib"]
+	path = glib
+	url = https://github.com/goffioul/ax86-nb-qemu-glib.git
+[submodule "qemu"]
+	path = qemu
+	url = https://github.com/goffioul/ax86-nb-qemu-qemu.git
