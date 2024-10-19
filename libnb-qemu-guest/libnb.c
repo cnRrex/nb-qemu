@@ -22,17 +22,19 @@
 //#define LOG_NDEBUG 0
 
 #include <dlfcn.h>
-#include <android/dlext.h>
+//#include <android/dlext.h>
 #include <string.h>
-#include <log/log.h>
-#include <utils/CallStack.h>
+//#include <log/log.h>
+//#include <utils/CallStack.h>
+#include <pthread.h>
+#include <stdio.h>
 
 static char nb_qemu_error[4096] = { '\0' };
 
-extern "C" {
+//extern "C" {
 int __pthread_allocate_self(void **stack, void **tls);
 void __pthread_deallocate_self(void **stack, size_t *size);
-bool android_init_anonymous_namespace(const char* shared_libs_sonames,
+/*bool android_init_anonymous_namespace(const char* shared_libs_sonames,
                                       const char* library_search_path);
 struct android_namespace_t* android_create_namespace(const char *name,
                                                      const char *ld_library_path,
@@ -42,40 +44,41 @@ struct android_namespace_t* android_create_namespace(const char *name,
                                                      struct android_namespace_t *parent_ns);
 bool android_link_namespaces(android_namespace_t* from,
                              android_namespace_t* to,
-                             const char* shared_libs_sonames);
-}
+                             const char* shared_libs_sonames);*/
+//}
 
-extern "C" {
+//extern "C" {
 
 void nb_qemu_initialize() {
-    ALOGV("initialize");
+//    ALOGV("initialize");
 }
 
 void *nb_qemu_loadLibrary(const char *filename, void *ns) {
-    ALOGV("loadLibrary: %s, ns=%p", filename, ns);
-    android_dlextinfo info = { .flags = ANDROID_DLEXT_USE_NAMESPACE, .library_namespace = (struct android_namespace_t *) ns };
-    void *ret = android_dlopen_ext(filename, RTLD_LAZY, &info);
+//    ALOGV("loadLibrary: %s, ns=%p", filename, ns);
+//    android_dlextinfo info = { .flags = ANDROID_DLEXT_USE_NAMESPACE, .library_namespace = (struct android_namespace_t *) ns };
+//    void *ret = android_dlopen_ext(filename, RTLD_LAZY, &info);
+    void *ret = dlopen(filename, RTLD_LAZY);
     if (!ret) {
         nb_qemu_error[0] = '\0';
         strncat(nb_qemu_error, dlerror(), sizeof(nb_qemu_error) - 1);
     }
-    ALOGV("loadLibrary: => %p", ret);
+//    ALOGV("loadLibrary: => %p", ret);
     return ret;
 }
 
 const char *nb_qemu_getError() {
-    ALOGV("getError: %s", nb_qemu_error);
+//    ALOGV("getError: %s", nb_qemu_error);
     return nb_qemu_error;
 }
 
 void *nb_qemu_getLibrarySymbol(void *handle, const char *name) {
-    ALOGV("getLibrarySymbol: %p, %s", handle, name);
+//    ALOGV("getLibrarySymbol: %p, %s", handle, name);
     void *ret = dlsym(handle, name);
     if (!ret) {
         nb_qemu_error[0] = '\0';
         strncat(nb_qemu_error, dlerror(), sizeof(nb_qemu_error) - 1);
     }
-    ALOGV("getLibrarySymbol: => %p", ret);
+//    ALOGV("getLibrarySymbol: => %p", ret);
     return ret;
 }
 
@@ -88,10 +91,10 @@ void nb_qemu_deallocateThread(void **stack, size_t *size) {
 }
 
 void nb_qemu_printCallStack() {
-    android::CallStack(LOG_TAG);
+//    android::CallStack(LOG_TAG);
 }
 
-bool nb_qemu_initAnonymousNamespace(const char *public_ns_sonames, const char *anon_ns_library_path) {
+/*bool nb_qemu_initAnonymousNamespace(const char *public_ns_sonames, const char *anon_ns_library_path) {
     ALOGV("initAnonymousNamespace: sonames=%s, library_path=%s", public_ns_sonames, anon_ns_library_path);
     return android_init_anonymous_namespace(public_ns_sonames, anon_ns_library_path);
 }
@@ -110,6 +113,6 @@ struct android_namespace_t *nb_qemu_createNamespace(const char *name,
 bool nb_qemu_linkNamespaces(android_namespace_t *from, android_namespace_t *to, const char *shared_libs_sonames) {
     ALOGV("linkNamespaces: from=%p, to=%p, libs=%s", from, to, shared_libs_sonames);
     return android_link_namespaces(from, to, shared_libs_sonames);
-}
+}*/
 
-};
+//};

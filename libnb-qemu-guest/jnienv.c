@@ -21,12 +21,17 @@
 #define LOG_TAG "libnb-qemu-guest"
 
 #include <sys/syscall.h>
+#include <stddef.h>
 #include <unistd.h>
-#include <log/log.h>
+//#include <log/log.h>
 #include <jni.h>
 
 extern JNIEnv nb_qemu_JNIEnv;
 extern JavaVM nb_qemu_JavaVM;
+
+#ifndef __NR_SYSCALL_BASE
+#define __NR_SYSCALL_BASE 0
+#endif
 
 #define __NR_host_jnienv (__NR_SYSCALL_BASE + 0x01000)
 #define __NR_host_javavm (__NR_SYSCALL_BASE + 0x01001)
@@ -183,7 +188,7 @@ static jobject nb_qemu_jnienv_NewObjectV(JNIEnv* UNUSED(env), jclass cls, jmetho
     return NULL;
 }
 
-static jobject nb_qemu_jnienv_NewObjectA(JNIEnv* UNUSED(env), jclass cls, jmethodID mID, const jvalue *args) {
+static jobject nb_qemu_jnienv_NewObjectA(JNIEnv* UNUSED(env), jclass cls, jmethodID mID, /*const*/ jvalue *args) {
     jobject ret;
     if (syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(NewObjectA), cls, mID, args, &ret) == 0)
       return ret;
@@ -225,7 +230,7 @@ static type nb_qemu_jnienv_Call##name##MethodV(JNIEnv* UNUSED(env), jobject obj,
     return null; \
 } \
  \
-static type nb_qemu_jnienv_Call##name##MethodA(JNIEnv* UNUSED(env), jobject obj, jmethodID mID, const jvalue *args) { \
+static type nb_qemu_jnienv_Call##name##MethodA(JNIEnv* UNUSED(env), jobject obj, jmethodID mID, /*const*/ jvalue *args) { \
     type ret; \
     if (syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(Call##name##MethodA), obj, mID, args, &ret) == 0) \
       return ret; \
@@ -253,7 +258,7 @@ static void nb_qemu_jnienv_CallVoidMethodV(JNIEnv* UNUSED(env), jobject obj, jme
     syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallVoidMethodV), obj, mID, args);
 }
 
-static void nb_qemu_jnienv_CallVoidMethodA(JNIEnv* UNUSED(env), jobject obj, jmethodID mID, const jvalue *args) {
+static void nb_qemu_jnienv_CallVoidMethodA(JNIEnv* UNUSED(env), jobject obj, jmethodID mID, /*const*/ jvalue *args) {
     syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallVoidMethodA), obj, mID, args);
 }
 
@@ -274,7 +279,7 @@ static type nb_qemu_jnienv_CallNonvirtual##name##MethodV(JNIEnv* UNUSED(env), jo
     return null; \
 } \
  \
-static type nb_qemu_jnienv_CallNonvirtual##name##MethodA(JNIEnv* UNUSED(env), jobject obj, jclass cls, jmethodID mID, const jvalue *args) { \
+static type nb_qemu_jnienv_CallNonvirtual##name##MethodA(JNIEnv* UNUSED(env), jobject obj, jclass cls, jmethodID mID, /*const*/ jvalue *args) { \
     type ret; \
     if (syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallNonvirtual##name##MethodA), obj, cls, mID, args, &ret) == 0) \
       return ret; \
@@ -302,7 +307,7 @@ static void nb_qemu_jnienv_CallNonvirtualVoidMethodV(JNIEnv* UNUSED(env), jobjec
     syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallNonvirtualVoidMethodV), obj, cls, mID, args);
 }
 
-static void nb_qemu_jnienv_CallNonvirtualVoidMethodA(JNIEnv* UNUSED(env), jobject obj, jclass cls, jmethodID mID, const jvalue *args) {
+static void nb_qemu_jnienv_CallNonvirtualVoidMethodA(JNIEnv* UNUSED(env), jobject obj, jclass cls, jmethodID mID, /*const*/ jvalue *args) {
     syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallNonvirtualVoidMethodA), obj, cls, mID, args);
 }
 
@@ -369,7 +374,7 @@ static type nb_qemu_jnienv_CallStatic##name##MethodV(JNIEnv* UNUSED(env), jclass
     return null; \
 } \
  \
-static type nb_qemu_jnienv_CallStatic##name##MethodA(JNIEnv* UNUSED(env), jclass cls, jmethodID mID, const jvalue *args) { \
+static type nb_qemu_jnienv_CallStatic##name##MethodA(JNIEnv* UNUSED(env), jclass cls, jmethodID mID, /*const*/ jvalue *args) { \
     type ret; \
     if (syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallStatic##name##MethodA), cls, mID, args, &ret) == 0) \
       return ret; \
@@ -397,7 +402,7 @@ static void nb_qemu_jnienv_CallStaticVoidMethodV(JNIEnv* UNUSED(env), jclass cls
     syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallStaticVoidMethodV), cls, mID, args);
 }
 
-static void nb_qemu_jnienv_CallStaticVoidMethodA(JNIEnv* UNUSED(env), jclass cls, jmethodID mID, const jvalue *args) {
+static void nb_qemu_jnienv_CallStaticVoidMethodA(JNIEnv* UNUSED(env), jclass cls, jmethodID mID, /*const*/ jvalue *args) {
     syscall(__NR_host_jnienv, JNIENV_CALLBACK_ID(CallStaticVoidMethodA), cls, mID, args);
 }
 
@@ -894,7 +899,7 @@ static struct JNINativeInterface _jni_iface = {
 JNIEnv nb_qemu_JNIEnv = &_jni_iface;
 
 static jint nb_qemu_javavm_DestroyJavaVM(JavaVM* UNUSED(vm)) {
-    ALOGE("*** NOT SUPPORTED: DestroyJavaVM");
+//    ALOGE("*** NOT SUPPORTED: DestroyJavaVM");
     return JNI_ERR;
 }
 
@@ -917,7 +922,7 @@ static jint nb_qemu_javavm_GetEnv(JavaVM* UNUSED(vm), void **env, jint version) 
 }
 
 static jint nb_qemu_javavm_AttachCurrentThreadAsDaemon(JavaVM* UNUSED(vm), JNIEnv** UNUSED(penv), void* UNUSED(args)) {
-    ALOGE("*** NOT SUPPORTED: AttachCurrentThreadAsDaemon");
+//    ALOGE("*** NOT SUPPORTED: AttachCurrentThreadAsDaemon");
     return JNI_ERR;
 }
 

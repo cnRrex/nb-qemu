@@ -1,11 +1,14 @@
 #define LOG_TAG "OpenSLES-nb"
 
+#include <jni.h>
 #include <stdlib.h>
-#include <cutils/log.h>
+//#include <log/log.h>
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
 
-extern "C" {
+#include <stdio.h>
+#define ALOGE(...) puts("ALOGE: "); printf(__VA_ARGS__)
+#define LOG_ALWAYS_FATAL(...) puts("LOG_ALWAYS_FATAL: "); printf(__VA_ARGS__); exit(1)
 
 SLresult __nb_slCreateEngine(
     SLObjectItf *pEngine,
@@ -89,8 +92,6 @@ SLresult __nb_SLAndroidSimpleBufferQueueItf_Clear(SLAndroidSimpleBufferQueueItf)
 SLresult __nb_SLAndroidSimpleBufferQueueItf_GetState(SLAndroidSimpleBufferQueueItf, SLAndroidSimpleBufferQueueState *);
 SLresult __nb_SLAndroidSimpleBufferQueueItf_RegisterCallback(SLAndroidSimpleBufferQueueItf, slAndroidSimpleBufferQueueCallback, void *);
 
-};
-
 ///////////////////////////////////////////////////////////////////////////////
 
 #define MAX_OBJECT_INTERFACE 64
@@ -148,7 +149,7 @@ static void SLBufferQueueItf_callback(SLBufferQueueItf nativeCaller, void *pCont
 {
     nb_BufferQueue *thiz = (nb_BufferQueue *) pContext;
 
-    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != nullptr) {
+    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != NULL) {
         thiz->mCallback(&thiz->mItf, thiz->mContext);
     } else if (thiz->mNativeItf != nativeCaller) {
         ALOGE("SLBufferQueueItf_callback: misconfigured callback");
@@ -304,7 +305,7 @@ static SLresult SLEngineItf_CreateAudioPlayer(
     SLDataSink *nativeSink;
     SLresult ret;
 
-    *pPlayer = nullptr;
+    *pPlayer = NULL;
     nativeSink = unwrap_DataSink(pAudioSnk);
     ret = __nb_SLEngineItf_CreateAudioPlayer(thiz->mNativeItf, &nativeItf, pAudioSrc, nativeSink, numInterfaces, pInterfaceIds, pInterfaceRequired);
     free_DataSink(pAudioSnk, nativeSink);
@@ -541,13 +542,13 @@ static void SLObjectItf_callback(
 ) {
     nb_Object *thiz = (nb_Object *) pContext;
 
-    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != nullptr) {
-        void *nb_pInterface = nullptr;
+    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != NULL) {
+        void *nb_pInterface = NULL;
 
-        if (pInterface != nullptr) {
+        if (pInterface != NULL) {
             nb_Interface *itf = lookup_Interface(pInterface, thiz);
 
-            if (itf != nullptr)
+            if (itf != NULL)
                 nb_pInterface = &itf->mItf;
             else
                 ALOGE("SLObjectItf_callback: unknown interface");
@@ -586,7 +587,7 @@ static SLresult SLObjectItf_GetInterface(SLObjectItf self, const SLInterfaceID i
     ret = __nb_SLObjectItf_GetInterface(thiz->mNativeItf, iid, (void *) &nativeItf);
     if (ret == SL_RESULT_SUCCESS) {
         nb_Interface *itf = lookup_Interface(nativeItf, thiz);
-        if (itf == nullptr)
+        if (itf == NULL)
             itf = wrap_Interface(nativeItf, iid, thiz);
         *(void **)pInterface = &itf->mItf;
     }
@@ -615,7 +616,7 @@ static void SLObjectItf_Destroy(SLObjectItf self)
 {
     nb_Object *thiz = (nb_Object *) self;
     __nb_SLObjectItf_Destroy(thiz->mNativeItf);
-    for (int i = 0; i < MAX_OBJECT_INTERFACE && thiz->mInterfaces[i] != nullptr; i++)
+    for (int i = 0; i < MAX_OBJECT_INTERFACE && thiz->mInterfaces[i] != NULL; i++)
         free(thiz->mInterfaces[i]);
     free(thiz);
 }
@@ -657,7 +658,7 @@ static void SLPlayItf_callback(SLPlayItf nativeCaller, void *pContext, SLuint32 
 {
     nb_Play *thiz = (nb_Play *) pContext;
 
-    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != nullptr) {
+    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != NULL) {
         thiz->mCallback(&thiz->mItf, thiz->mContext, event);
     } else if (thiz->mNativeItf != nativeCaller) {
         ALOGE("SLPlayItf_callback: misconfigured callback");
@@ -915,7 +916,7 @@ static SLresult SLAndroidConfigurationItf_GetConfiguration(SLAndroidConfiguratio
     return __nb_SLAndroidConfigurationItf_GetConfiguration(thiz->mNativeItf, configKey, pValueSize, pConfigValue);
 }
 
-static SLresult SLAndroidConfigurationItf_AcquireJavaProxy(SLAndroidConfigurationItf self, SLuint32 proxyType, jobject *pProxyObj)
+/*static SLresult SLAndroidConfigurationItf_AcquireJavaProxy(SLAndroidConfigurationItf self, SLuint32 proxyType, jobject *pProxyObj)
 {
     nb_AndroidConfiguration *thiz = (nb_AndroidConfiguration *) self;
     return __nb_SLAndroidConfigurationItf_AcquireJavaProxy(thiz->mNativeItf, proxyType, pProxyObj);
@@ -925,13 +926,13 @@ static SLresult SLAndroidConfigurationItf_ReleaseJavaProxy(SLAndroidConfiguratio
 {
     nb_AndroidConfiguration *thiz = (nb_AndroidConfiguration *) self;
     return __nb_SLAndroidConfigurationItf_ReleaseJavaProxy(thiz->mNativeItf, proxyType);
-}
+}*/
 
 static const struct SLAndroidConfigurationItf_ nb_AndroidConfiguration_itf = {
     .SetConfiguration = SLAndroidConfigurationItf_SetConfiguration,
     .GetConfiguration = SLAndroidConfigurationItf_GetConfiguration,
-    .AcquireJavaProxy = SLAndroidConfigurationItf_AcquireJavaProxy,
-    .ReleaseJavaProxy = SLAndroidConfigurationItf_ReleaseJavaProxy
+/*    .AcquireJavaProxy = SLAndroidConfigurationItf_AcquireJavaProxy,
+    .ReleaseJavaProxy = SLAndroidConfigurationItf_ReleaseJavaProxy*/
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -940,7 +941,7 @@ static void SLAndroidSimpleBufferQueueItf_callback(SLAndroidSimpleBufferQueueItf
 {
     nb_AndroidSimpleBufferQueue *thiz = (nb_AndroidSimpleBufferQueue *) pContext;
 
-    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != nullptr) {
+    if (thiz->mNativeItf == nativeCaller && thiz->mCallback != NULL) {
         thiz->mCallback(&thiz->mItf, thiz->mContext);
     } else if (thiz->mNativeItf != nativeCaller) {
         ALOGE("SLAndroidSimpleBufferQueueItf_callback: misconfigured callback");
@@ -1009,7 +1010,7 @@ static struct {
 } IID_wrappers[] = {
     { SL_IID_ENGINE, wrap_ObjectInterface<nb_Engine, (void *) &nb_Engine_itf> },
     { SL_IID_ENVIRONMENTALREVERB, wrap_ObjectInterface<nb_EnvironmentalReverb, (void *) &nb_EnvironmentalReverb_itf> },
-    { nullptr, nullptr }
+    { NULL, NULL }
 };
 #else
 static nb_Interface* wrap_ObjectInterface(size_t size, void *itf, void *nativeItf)
@@ -1023,10 +1024,10 @@ static nb_Interface* wrap_ObjectInterface(size_t size, void *itf, void *nativeIt
 
 static nb_Interface* wrap_Interface(void *nativeItf, SLInterfaceID iid, nb_Object *owner)
 {
-    nb_Interface *obj = nullptr;
+    nb_Interface *obj = NULL;
 
 #if 0
-    for (int i = 0; IID_wrappers[i].iid != nullptr; i++) {
+    for (int i = 0; IID_wrappers[i].iid != NULL; i++) {
         if (IID_wrappers[i].iid == iid) {
             obj = IID_wrappers[i].wrapper(nativeItf);
             break;
@@ -1057,7 +1058,7 @@ static nb_Interface* wrap_Interface(void *nativeItf, SLInterfaceID iid, nb_Objec
         obj = wrap_ObjectInterface(sizeof(nb_AndroidSimpleBufferQueue), (void *) &nb_AndroidSimpleBufferQueue_itf, nativeItf);
 #endif
 
-    if (obj == nullptr) {
+    if (obj == NULL) {
         LOG_ALWAYS_FATAL("unable to wrap native interface %08x-%04x-%04x-%04x-%02x%02x%02x%02x%02x%02x for object %p",
                          iid->time_low, iid->time_mid, iid->time_hi_and_version, iid->clock_seq,
                          iid->node[0], iid->node[1], iid->node[2], iid->node[3], iid->node[4], iid->node[5],
@@ -1077,17 +1078,15 @@ static nb_Interface* wrap_Interface(void *nativeItf, SLInterfaceID iid, nb_Objec
 
 static nb_Interface* lookup_Interface(void *nativeItf, nb_Object *owner)
 {
-    for (int i = 0; i < MAX_OBJECT_INTERFACE && owner->mInterfaces[i] != nullptr; i++) {
+    for (int i = 0; i < MAX_OBJECT_INTERFACE && owner->mInterfaces[i] != NULL; i++) {
         if (owner->mInterfaces[i]->mNativeItf == nativeItf) {
             return owner->mInterfaces[i];
         }
     }
-    return nullptr;
+    return NULL;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-
-extern "C" {
 
 __attribute__((visibility("default")))
 SLresult slCreateEngine(
@@ -1124,5 +1123,3 @@ SLresult slQuerySupportedEngineInterfaces(
 ) {
     return SL_RESULT_PARAMETER_INVALID;
 }
-
-};

@@ -38,7 +38,7 @@ int qemu_android_initialize(const char *procname, const char *tmpdir)
          LOG_ALWAYS_FATAL("%s: NB_QEMU_SYSROOT not set", __func__);
     gchar *sysroot_path_arg = g_strdup_printf("LD_LIBRARY_PATH=%s", sysroot_path);
     gchar *entry_point_path = g_strdup_printf("%s/%s", sysroot_path, "libnb-qemu-guest.so");
-    char *argv[] = { LOG_TAG, "-d", QEMU_LOG_MASK, "-E", sysroot_path_arg, "-T", (char *)tmpdir, "-0", (char *)procname, entry_point_path };
+    char *argv[] = { LOG_TAG, "-d", QEMU_LOG_MASK, "-E", sysroot_path_arg, "-L", (char *)sysroot_path, "-T", (char *)tmpdir, "-0", (char *)procname, entry_point_path };
     int result = qemu_main(sizeof(argv)/sizeof(char*), argv, NULL);
     free(sysroot_path_arg);
     free(entry_point_path);

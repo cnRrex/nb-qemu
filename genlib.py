@@ -9,7 +9,7 @@ parser.add_argument('file', nargs=1)
 """
     [HANDLER_EGL] = { 0x0100, 99, "libnb-qemu-EGL.so", nullptr },
     [HANDLER_GLESV1_CM] = { 0x0400, 257, "libnb-qemu-GLESv1_CM.so", nullptr },
-    [HANDLER_GLESV3] = { 0x1000, 399, "libnb-qemu-GLESv3.so", nullptr },
+    [HANDLER_GLESV3] = { 0x1000, 399, "libnb-qemu-GLESv2.so", nullptr },
     [HANDLER_OPENSLES] = { 0x0600, 62, "libnb-qemu-OpenSLES.so", nullptr },
     [HANDLER_ANDROID] = { 0x0700, 74, "libnb-qemu-android.so", nullptr }
 """
