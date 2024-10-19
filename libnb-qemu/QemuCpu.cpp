@@ -51,12 +51,12 @@ QemuCpu::~QemuCpu()
     }
 }
 
-uint32_t QemuCpu::call(uint32_t addr, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, char *stack, int stack_size) const
+intptr_t QemuCpu::call(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size) const
 {
-    return qemu_android_call5(cpu_, addr, arg1, arg2, arg3, arg4, stack, stack_size);
+    return qemu_android_call9(cpu_, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
 }
 
-uint64_t QemuCpu::call64(uint32_t addr, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, char *stack, int stack_size) const
+uint64_t QemuCpu::call64(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size) const
 {
-    return qemu_android_call5_ll(cpu_, addr, arg1, arg2, arg3, arg4, stack, stack_size);
+    return qemu_android_call9_ll(cpu_, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
 }

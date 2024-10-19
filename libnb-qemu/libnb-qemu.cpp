@@ -32,7 +32,7 @@ namespace android {
 static bool nb_qemu_initialize(const NativeBridgeRuntimeCallbacks* runtime_cbs, const char* private_dir, const char* instruction_set)
 {
     ALOGI("initialize");
-    if (QemuBridge::initialize(getprogname(), private_dir)) {
+    if (QemuBridge::initialize("libnb-qemu"/*getprogname()*/, private_dir)) {
         JavaBridge::initialize(runtime_cbs);
         OsBridge::initialize();
         return true;
@@ -153,7 +153,8 @@ NativeBridgeCallbacks NativeBridgeItf = {
     .unloadLibrary = nb_qemu_unloadLibrary,
     .getError = nb_qemu_getError,
     .isPathSupported = nb_qemu_isPathSupported,
-    .initAnonymousNamespace = nb_qemu_initAnonymousNamespace,
+//   removed in da53336c50994a20c292dd5fde0591ca53efea2a
+//  .initAnonymousNamespace = nb_qemu_initAnonymousNamespace,
     .createNamespace = nb_qemu_createNamespace,
     .linkNamespaces = nb_qemu_linkNamespaces,
     .loadLibraryExt = nb_qemu_loadLibraryExt,

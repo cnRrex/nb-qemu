@@ -27,12 +27,12 @@
 class Trampoline
 {
 public:
-  Trampoline(const std::string& name, uint32_t address, const std::string& signature);
+  Trampoline(const std::string& name, intptr_t address, const std::string& signature);
   virtual ~Trampoline();
 
   void *get_handle() const;
   const std::string& get_name() const { return name_; }
-  uint32_t get_address() const { return address_; }
+  intptr_t get_address() const { return address_; }
   const std::string& get_signature() const { return signature_; }
 
 protected:
@@ -44,7 +44,7 @@ private:
 
 private:
   std::string name_;
-  uint32_t address_;
+  intptr_t address_;
   std::string signature_;
   void *host_address_;
   ffi_closure *closure_;
@@ -60,7 +60,7 @@ private:
 class JNITrampoline : public Trampoline
 {
 public:
-  JNITrampoline(const std::string& name, uint32_t address, const std::string& shorty);
+  JNITrampoline(const std::string& name, intptr_t address, const std::string& shorty);
 
 protected:
   void *get_call_argument(int index, void *arg) override;
@@ -72,7 +72,7 @@ private:
 class JNILoadTrampoline : public Trampoline
 {
 public:
-  JNILoadTrampoline(const std::string& name, uint32_t address);
+  JNILoadTrampoline(const std::string& name, intptr_t address);
 
 protected:
   void *get_call_argument(int index, void *arg) override;
@@ -81,7 +81,7 @@ protected:
 class NativeActivityTrampoline : public Trampoline
 {
 public:
-  NativeActivityTrampoline(const std::string& name, uint32_t address);
+  NativeActivityTrampoline(const std::string& name, intptr_t address);
 
 protected:
   void call(void *ret, void **args) override;

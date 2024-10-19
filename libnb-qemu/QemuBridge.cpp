@@ -21,9 +21,13 @@
 #define LOG_TAG "libnb-qemu"
 #define LOG_NDEBUG 0
 
+#include <cstring>
 #include <map>
 #include <memory>
+#include <mutex>
+#ifdef __ANDROID__
 #include <android-base/strings.h>
+#endif
 #include <log/log.h>
 #include "Library.h"
 #include "QemuBridge.h"
@@ -32,9 +36,15 @@
 #include "QemuMemory.h"
 #include "Trampoline.h"
 
+#ifdef __ANDROID__
 using android::base::Split;
 using android::base::EndsWith;
-using android::base::StartsWith;
+#endif
+
+bool StartsWith(std::string str, std::string start)
+{
+    return !strncmp(str.c_str(), start.c_str(), start.length());
+}
 
 class QemuBridgeImpl
 {
@@ -58,14 +68,14 @@ public:
     bool link_namespaces(void *from, void *to, const char *shared_libs_sonames);
 
 private:
-    uint32_t initialize_;
-    uint32_t load_library_;
-    uint32_t get_library_symbol_;
-    uint32_t allocate_thread_;
-    uint32_t get_error_;
-    uint32_t init_anonymous_namespace_;
-    uint32_t create_namespace_;
-    uint32_t link_namespaces_;
+    intptr_t initialize_;
+    intptr_t load_library_;
+    intptr_t get_library_symbol_;
+    intptr_t allocate_thread_;
+    intptr_t get_error_;
+    intptr_t init_anonymous_namespace_;
+    intptr_t create_namespace_;
+    intptr_t link_namespaces_;
 
     std::map<void *, std::shared_ptr<Library>> libraries_;
     std::map<std::string, std::shared_ptr<Library>> named_libraries_;
@@ -87,12 +97,12 @@ bool QemuBridgeImpl::initialize(const std::string& procname, const std::string& 
         ALOGV("QemuBridge::allocate_thread_: %p", reinterpret_cast<void *>(allocate_thread_));
         get_error_ = QemuCore::lookup_symbol("nb_qemu_getError");
         ALOGV("QemuBridge::get_error_: %p", reinterpret_cast<void *>(get_error_));
-        create_namespace_ = QemuCore::lookup_symbol("nb_qemu_createNamespace");
+/*      create_namespace_ = QemuCore::lookup_symbol("nb_qemu_createNamespace");
         ALOGV("QemuBridge::create_namespace_: %p", reinterpret_cast<void *>(create_namespace_));
         link_namespaces_ = QemuCore::lookup_symbol("nb_qemu_linkNamespaces");
         ALOGV("QemuBridge::link_namespaces_: %p", reinterpret_cast<void *>(link_namespaces_));
         init_anonymous_namespace_ = QemuCore::lookup_symbol("nb_qemu_initAnonymousNamespace");
-        ALOGV("QemuBridge::init_anonymous_namespace_: %p", reinterpret_cast<void *>(init_anonymous_namespace_));
+        ALOGV("QemuBridge::init_anonymous_namespace_: %p", reinterpret_cast<void *>(init_anonymous_namespace_));*/
         if (initialize_) {
             QemuCpu::get()->call(initialize_);
             return true;
@@ -103,6 +113,7 @@ bool QemuBridgeImpl::initialize(const std::string& procname, const std::string& 
 
 bool QemuBridgeImpl::is_path_supported(const std::string& path) const
 {
+#ifdef __ANDROID__
     if (path.empty())
         return false;
 
@@ -114,6 +125,10 @@ bool QemuBridgeImpl::is_path_supported(const std::string& path) const
     }
 
     return true;
+#else
+    /* we don't ever call this function in ATL anyway */
+    return false;
+#endif
 }
 
 void *QemuBridgeImpl::load_library(const std::string& filename, void *ns)
@@ -128,11 +143,11 @@ void *QemuBridgeImpl::load_library(const std::string& filename, void *ns)
     if (load_library_) {
         size_t length = filename.length();
         QemuMemory::Malloc p(length + 1);
-        uint32_t ret = 0;
+        intptr_t ret = 0;
 
         if (p) {
             p.memcpy(filename.c_str(), length + 1);
-            ret = QemuCpu::get()->call(load_library_, p.get_address(), (uint32_t) ns);
+            ret = QemuCpu::get()->call(load_library_, p.get_address(), (intptr_t) ns);
         }
 
         if (ret) {
@@ -169,7 +184,7 @@ void *QemuBridgeImpl::get_trampoline(void *lib_handle, const std::string& name, 
     if (get_library_symbol_) {
         size_t length = name.length();
         QemuMemory::Malloc p(length + 1);
-        uint32_t ret = 0;
+        intptr_t ret = 0;
 
         if (p) {
             p.memcpy(name.c_str(), length + 1);
@@ -206,7 +221,7 @@ const char *QemuBridgeImpl::get_error()
 
 bool QemuBridgeImpl::init_anonymous_namespace(const char *public_ns_sonames, const char *anon_ns_library_path)
 {
-  return QemuCpu::get()->call(init_anonymous_namespace_, (uint32_t) public_ns_sonames, (uint32_t) anon_ns_library_path);
+  return QemuCpu::get()->call(init_anonymous_namespace_, (intptr_t) public_ns_sonames, (intptr_t) anon_ns_library_path);
 }
 
 void *QemuBridgeImpl::create_namespace(const char *name,
@@ -216,7 +231,21 @@ void *QemuBridgeImpl::create_namespace(const char *name,
                                        const char *permitted_when_isolated_path,
                                        void *parent_ns)
 {
-  uint32_t ret;
+  intptr_t ret;
+
+#ifdef __LP64__
+  ret = QemuCpu::get()->call(create_namespace_,
+                             (intptr_t) name,
+                             (intptr_t) ld_library_path,
+                             (intptr_t) default_library_path,
+                             (intptr_t) type,
+                             (intptr_t) permitted_when_isolated_path,
+                             (intptr_t) parent_ns,
+                             0,
+                             0,
+                             nullptr,
+                             0);
+#else
   union {
       struct {
           uint64_t type;
@@ -227,18 +256,23 @@ void *QemuBridgeImpl::create_namespace(const char *name,
   } stack = { .args = { .type = type, .permitted_when_isolated_path = permitted_when_isolated_path, .parent_ns = parent_ns } };
 
   ret = QemuCpu::get()->call(create_namespace_,
-                             (uint32_t) name,
-                             (uint32_t) ld_library_path,
-                             (uint32_t) default_library_path,
+                             (intptr_t) name,
+                             (intptr_t) ld_library_path,
+                             (intptr_t) default_library_path,
+                             0,
+                             0,
+                             0,
+                             0,
                              0,
                              stack.data,
                              sizeof(stack.data));
+#endif
   return (void *) ret;
 }
 
 bool QemuBridgeImpl::link_namespaces(void *from, void *to, const char *shared_libs_sonames)
 {
-  return QemuCpu::get()->call(link_namespaces_, (uint32_t) from, (uint32_t) to, (uint32_t) shared_libs_sonames);
+  return QemuCpu::get()->call(link_namespaces_, (intptr_t) from, (intptr_t) to, (intptr_t) shared_libs_sonames);
 }
 
 namespace QemuBridge {

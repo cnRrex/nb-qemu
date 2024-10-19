@@ -1,21 +1,22 @@
 %base 0x0100
 %host:include <EGL/egl.h>
 %host:include <EGL/eglext.h>
-%host:include <libEGL.itf.h>
+%host:include "libEGL.itf.h"
+%include "EGL_bio.h"
 
-EGLBoolean eglChooseConfig (EGLDisplay dpy, ptr:EGLint attrib_list, ptr:EGLConfig configs, EGLint config_size, ptr:EGLint num_config)
+EGLBoolean bionic_eglChooseConfig (EGLDisplay dpy, ptr:EGLint attrib_list, ptr:EGLConfig configs, EGLint config_size, ptr:EGLint num_config)
 EGLBoolean eglCopyBuffers (EGLDisplay dpy, EGLSurface surface, EGLNativePixmapType target)
 EGLContext eglCreateContext (EGLDisplay dpy, EGLConfig config, EGLContext share_context, ptr:EGLint attrib_list)
-EGLSurface eglCreatePbufferSurface (EGLDisplay dpy, EGLConfig config, ptr:EGLint attrib_list)
+EGLSurface bionic_eglCreatePbufferSurface (EGLDisplay dpy, EGLConfig config, ptr:EGLint attrib_list)
 EGLSurface eglCreatePixmapSurface (EGLDisplay dpy, EGLConfig config, EGLNativePixmapType pixmap, ptr:EGLint attrib_list)
-EGLSurface eglCreateWindowSurface (EGLDisplay dpy, EGLConfig config, EGLNativeWindowType win, ptr:EGLint attrib_list)
+EGLSurface bionic_eglCreateWindowSurface (EGLDisplay dpy, EGLConfig config, ptr:void win, ptr:EGLint attrib_list)
 EGLBoolean eglDestroyContext (EGLDisplay dpy, EGLContext ctx)
 EGLBoolean eglDestroySurface (EGLDisplay dpy, EGLSurface surface)
 EGLBoolean eglGetConfigAttrib (EGLDisplay dpy, EGLConfig config, EGLint attribute, ptr:EGLint value)
 EGLBoolean eglGetConfigs (EGLDisplay dpy, ptr:EGLConfig configs, EGLint config_size, ptr:EGLint num_config)
 EGLDisplay eglGetCurrentDisplay (void)
 EGLSurface eglGetCurrentSurface (EGLint readdraw)
-EGLDisplay eglGetDisplay (EGLNativeDisplayType display_id)
+EGLDisplay bionic_eglGetDisplay (EGLNativeDisplayType display_id)
 EGLint eglGetError (void)
 EGLBoolean eglInitialize (EGLDisplay dpy, ptr:EGLint major, ptr:EGLint minor)
 EGLBoolean eglMakeCurrent (EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)

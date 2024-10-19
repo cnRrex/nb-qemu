@@ -82,7 +82,7 @@ static std::string shorty_to_signature(const std::string& shorty)
   return signature;
 }
 
-Trampoline::Trampoline(const std::string& name, uint32_t address, const std::string& signature)
+Trampoline::Trampoline(const std::string& name, intptr_t address, const std::string& signature)
      : name_(name),
        address_(address),
        signature_(signature),
@@ -108,27 +108,29 @@ Trampoline::Trampoline(const std::string& name, uint32_t address, const std::str
           if (! rtype_)
             return;
           argtypes_ = reinterpret_cast<ffi_type **>(calloc(sizeof(ffi_type *), nargs_));
-          for (int i = 0, nregs = 4; i < nargs_; i++) {
+          for (int i = 0, nregs = __LP64__ ? 8 : 4; i < nargs_; i++) {
               argtypes_[i] = type_to_ffi(signature[i+1]);
               if (! argtypes_[i])
                 return;
               // Check valid size and attempt to use register(s)
               switch (argtypes_[i]->size) {
-                  case 1:
-                  case 2:
-                  case 4:
-                    if (nregs) {
-                        nregs--;
-                        continue;
-                    }
-                    break;
                   case 8:
+#ifndef __LP64__
                     if (nregs >= 2) {
                         nregs = nregs == 3 ? 2 : nregs;
                         nregs -= 2;
                         continue;
                     }
                     nregs = 0;
+                    break;
+#endif
+                  case 4:
+                  case 2:
+                  case 1:
+                    if (nregs) {
+                        nregs--;
+                        continue;
+                    }
                     break;
                   default:
                     ALOGE("Unsupported argument size: %d", argtypes_[i]->size);
@@ -137,9 +139,11 @@ Trampoline::Trampoline(const std::string& name, uint32_t address, const std::str
               // Argument must be passed in the stack
               if (! stackoffsets_)
                 stackoffsets_ = reinterpret_cast<int *>(calloc(sizeof(int), nargs_ - i));
+#ifndef __LP64__
               // Double-word sized arguments must be double-word aligned in the stack
               if (argtypes_[i]->size == 8)
                 stacksize_ = ALIGN_DWORD(stacksize_);
+#endif
               // Add argument to the stack
               stackoffsets_[nstackargs_] = stacksize_;
               nstackargs_++;
@@ -185,7 +189,7 @@ void Trampoline::call(void *ret, void **args)
 {
   ALOGV("Trampoline[%s] -- START", name_.c_str());
 
-  uint32_t regs[4] = { 0, 0, 0, 0 };
+  intptr_t regs[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
   char *stack = nullptr;
   int rindex = 0;
   int nregargs = nargs_ - nstackargs_;
@@ -203,23 +207,27 @@ void Trampoline::call(void *ret, void **args)
 
   for (int i = 0; i < nregargs; i++) {
       void *arg = get_call_argument(i, args[i]);
-      if (argtypes_[i]->size <= 4)
+#ifdef __LP64__
+        regs[rindex++] = *(uint64_t *)arg;
+#else
+      if (argtypes_[i]->size <= 4) {
         regs[rindex++] = *(uint32_t *)arg;
-      else {
+      } else {
           rindex = rindex ? 2 : 0;
           *(uint64_t *)(&regs[rindex]) = *(uint64_t *)arg;
           rindex += 2;
       }
+#endif
   }
 
   if (rtype_->size == 8) {
-      uint64_t result = QemuCpu::get()->call64(address_, regs[0], regs[1], regs[2], regs[3], stack, stacksize_);
+      uint64_t result = QemuCpu::get()->call64(address_, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6], regs[7], stack, stacksize_);
 
       ALOGV("Trampoline[%s] -- END => %016llx", name_.c_str(), result);
       *((uint64_t *)ret) = result;
   }
   else {
-      uint32_t result = QemuCpu::get()->call(address_, regs[0], regs[1], regs[2], regs[3], stack, stacksize_);
+      intptr_t result = QemuCpu::get()->call(address_, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6], regs[7], stack, stacksize_);
 
       if (rtype_ == &ffi_type_void) {
           ALOGV("Trampoline[%s] -- END", name_.c_str());
@@ -248,7 +256,7 @@ void *Trampoline::get_call_argument(int index, void *arg)
   return arg;
 }
 
-JNITrampoline::JNITrampoline(const std::string& name, uint32_t address, const std::string& shorty)
+JNITrampoline::JNITrampoline(const std::string& name, intptr_t address, const std::string& shorty)
      : Trampoline(name, address, shorty_to_signature(shorty)),
        shorty_(shorty)
 {
@@ -264,7 +272,7 @@ void *JNITrampoline::get_call_argument(int index, void *arg)
   }
 }
 
-JNILoadTrampoline::JNILoadTrampoline(const std::string& name, uint32_t address)
+JNILoadTrampoline::JNILoadTrampoline(const std::string& name, intptr_t address)
      : Trampoline(name, address, name == "JNI_OnLoad" ? "ipp" : "vpp")
 {
 }
@@ -279,7 +287,7 @@ void *JNILoadTrampoline::get_call_argument(int index, void *arg)
   }
 }
 
-#include <android/native_activity.h>
+#include "/home/Mis012/Github_and_other_sources/android_translation_layer/src/api-impl-jni/native_activity.h"
 
 #define CALLBACK_ONSTART                        0
 #define CALLBACK_ONRESUME                       1
@@ -303,29 +311,29 @@ struct GuestNativeActivity : public ANativeActivity {
     ANativeActivityCallbacks callbacks_;
 };
 
-static uint32_t GuestNativeActivity_getCallback(ANativeActivity *activity, int index)
+static intptr_t GuestNativeActivity_getCallback(ANativeActivity *activity, int index)
 {
-  QemuMemory::Region<GuestNativeActivity> guest_activity((uint32_t) activity->instance);
-  return (uint32_t) ((void **) guest_activity.get()->callbacks)[index];
+  QemuMemory::Region<GuestNativeActivity> guest_activity((intptr_t) activity->instance);
+  return (intptr_t) ((void **) guest_activity.get()->callbacks)[index];
 }
 
 #define GNA_CALLBACK(name, index) \
 static void GuestNativeActivity_ ## name (ANativeActivity *activity) \
 { \
-  uint32_t callback = GuestNativeActivity_getCallback(activity, index); \
+  intptr_t callback = GuestNativeActivity_getCallback(activity, index); \
   if (callback) { \
       ALOGI(#name); \
-      QemuCpu::get()->call(callback, (uint32_t) activity->instance); \
+      QemuCpu::get()->call(callback, (intptr_t) activity->instance); \
   } \
 }
 
 #define GNA_CALLBACK_ARG(name, T, index) \
 static void GuestNativeActivity_ ## name (ANativeActivity *activity, T arg) \
 { \
-  uint32_t callback = GuestNativeActivity_getCallback(activity, index); \
+  intptr_t callback = GuestNativeActivity_getCallback(activity, index); \
   if (callback) { \
       ALOGI(#name); \
-      QemuCpu::get()->call(callback, (uint32_t) activity->instance, (uint32_t) arg); \
+      QemuCpu::get()->call(callback, (intptr_t) activity->instance, (intptr_t) arg); \
   } \
 }
 
@@ -346,26 +354,26 @@ GNA_CALLBACK(onLowMemory, CALLBACK_ONLOWMEMORY)
 
 static void* GuestNativeActivity_onSaveInstanceState(ANativeActivity *activity, size_t *outSize)
 {
-  uint32_t callback = GuestNativeActivity_getCallback(activity, CALLBACK_ONSAVEINSTANCESTATE);
+  intptr_t callback = GuestNativeActivity_getCallback(activity, CALLBACK_ONSAVEINSTANCESTATE);
   if (callback) {
       ALOGW("GuestNativeActivity_onSaveInstanceState: ignoring for the time being");
-      // QemuCpu::get()->call(callback, (uint32_t) activity->instance, (uint32_t) arg);
+      // QemuCpu::get()->call(callback, (intptr_t) activity->instance, (intptr_t) arg);
   }
   return nullptr;
 }
 
 static void GuestNativeActivity_onDestroy(ANativeActivity *activity)
 {
-  uint32_t callback = GuestNativeActivity_getCallback(activity, CALLBACK_ONDESTROY);
+  intptr_t callback = GuestNativeActivity_getCallback(activity, CALLBACK_ONDESTROY);
   if (callback) {
       ALOGI("GuestNativeActivity_onDestroy");
-      QemuCpu::get()->call(callback, (uint32_t) activity->instance);
+      QemuCpu::get()->call(callback, (intptr_t) activity->instance);
   }
-  qemu_android_free((uint32_t) activity->instance);
+  qemu_android_free((intptr_t) activity->instance);
   activity->instance = nullptr;
 }
 
-NativeActivityTrampoline::NativeActivityTrampoline(const std::string& name, uint32_t address)
+NativeActivityTrampoline::NativeActivityTrampoline(const std::string& name, intptr_t address)
      : Trampoline(name, address, "vppI")
 {
 }
@@ -373,7 +381,7 @@ NativeActivityTrampoline::NativeActivityTrampoline(const std::string& name, uint
 void NativeActivityTrampoline::call(void *ret, void **args)
 {
   ANativeActivity *host_activity = *(ANativeActivity **)args[0];
-  uint32_t guest_activity_p = qemu_android_malloc(sizeof(GuestNativeActivity));
+  intptr_t guest_activity_p = qemu_android_malloc(sizeof(GuestNativeActivity));
 
   // Setup host ANativeActivity
   host_activity->instance = (void *) guest_activity_p;

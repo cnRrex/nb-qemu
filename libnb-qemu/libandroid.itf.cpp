@@ -14,7 +14,7 @@ static void* get_trampoline(void *callback, const char *name, const char *sig)
       if (it != sCallbacks.end())
         nativeCallback = it->second;
       else {
-          nativeCallback.reset(new Trampoline(name, (uint32_t) callback, sig));
+          nativeCallback.reset(new Trampoline(name, (uintptr_t) callback, sig));
           sCallbacks[callback] = nativeCallback;
       }
 

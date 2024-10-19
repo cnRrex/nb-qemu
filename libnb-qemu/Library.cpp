@@ -21,7 +21,7 @@
 #include "Library.h"
 #include "Trampoline.h"
 
-Library::Library(const std::string& name, uint32_t address)
+Library::Library(const std::string& name, intptr_t address)
      : name_(name),
        address_(address)
 {

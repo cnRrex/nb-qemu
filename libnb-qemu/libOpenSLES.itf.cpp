@@ -1,3 +1,7 @@
+#define LOG_TAG "OpenSLES-nb"
+
+#include <dlfcn.h>
+#include <log/log.h>
 #include <map>
 #include <memory>
 #include "libOpenSLES.itf.h"
@@ -13,7 +17,7 @@ static void* get_trampoline(void *callback, const char *name, const char *sig)
   if (it != sCallbacks.end())
     nativeCallback = it->second;
   else {
-      nativeCallback.reset(new Trampoline(name, (uint32_t) callback, sig));
+      nativeCallback.reset(new Trampoline(name, (uintptr_t) callback, sig));
       sCallbacks[callback] = nativeCallback;
   }
 
@@ -44,6 +48,24 @@ SLresult SLAndroidSimpleBufferQueueItf_RegisterCallback (SLAndroidSimpleBufferQu
 {
   slAndroidSimpleBufferQueueCallback nativeCallback = (slAndroidSimpleBufferQueueCallback) get_trampoline(callback, "SLAndroidSimpleBufferQueue_Callback", "vpp");
   return (*self)->RegisterCallback(self, nativeCallback, pContext);
+}
+
+intptr_t qemu_android_h2g(void *addr);
+
+void *nb_iid_dlsym (char *sym) {
+    static void *libOpenSLES = NULL;
+    if (!libOpenSLES) {
+        libOpenSLES = dlopen("libOpenSLES.so.1", RTLD_LAZY);
+        if (!libOpenSLES) {
+            ALOGE("unable to open libOpenSLES.so.1: %s", dlerror());
+            return NULL;
+        } else {
+            ALOGI("initializing OpenSLES IID list");
+        }
+    }
+    void *ret = dlsym(libOpenSLES, sym);
+    ALOGE("unable to find %s: %s", sym, dlerror());
+    return (void *)qemu_android_h2g(ret);
 }
 
 };

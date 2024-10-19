@@ -24,16 +24,24 @@
 #include <log/log.h>
 #include "QemuAndroid.h"
 #include "QemuInclude.h"
+#include <glib.h>
 
-#define QEMU_LOG_MASK "page,unimp"
+#define QEMU_LOG_MASK "page,unimp" // exec,nochain
 
-static uint32_t thread_allocate_;
-static uint32_t thread_deallocate_;
+static intptr_t thread_allocate_;
+static intptr_t thread_deallocate_;
 
 int qemu_android_initialize(const char *procname, const char *tmpdir)
 {
-    char *argv[] = { LOG_TAG, "-d", QEMU_LOG_MASK, "-E", "LD_DEBUG=1", "-T", tmpdir, "-0", procname, "/system/lib/libnb-qemu-guest.so" };
+    const char *sysroot_path = getenv("NB_QEMU_SYSROOT");
+    if(!sysroot_path)
+         LOG_ALWAYS_FATAL("%s: NB_QEMU_SYSROOT not set", __func__);
+    gchar *sysroot_path_arg = g_strdup_printf("LD_LIBRARY_PATH=%s", sysroot_path);
+    gchar *entry_point_path = g_strdup_printf("%s/%s", sysroot_path, "libnb-qemu-guest.so");
+    char *argv[] = { LOG_TAG, "-d", QEMU_LOG_MASK, "-E", sysroot_path_arg, "-T", (char *)tmpdir, "-0", (char *)procname, entry_point_path };
     int result = qemu_main(sizeof(argv)/sizeof(char*), argv, NULL);
+    free(sysroot_path_arg);
+    free(entry_point_path);
     if (result == 0) {
         thread_allocate_ = qemu_android_lookup_symbol("nb_qemu_allocateThread");
         ALOGV("QemuAndroid::thread_allocate_: %p", (void *)thread_allocate_);
@@ -43,13 +51,13 @@ int qemu_android_initialize(const char *procname, const char *tmpdir)
     return result;
 }
 
-uint32_t qemu_android_lookup_symbol(const char *name)
+intptr_t qemu_android_lookup_symbol(const char *name)
 {
     if (syminfos) {
         struct syminfo *s = syminfos;
 
         while (s) {
-            struct elf32_sym *syms = s->disas_symtab.elf32;
+            struct elf64_sym *syms = s->disas_symtab.elf64;
 
             for (int i = 0; i < s->disas_num_syms; i++) {
                 if (strcmp(s->disas_strtab + syms[i].st_name, name) == 0) {
@@ -63,9 +71,9 @@ uint32_t qemu_android_lookup_symbol(const char *name)
     return 0;
 }
 
-uint32_t qemu_android_malloc(size_t size)
+intptr_t qemu_android_malloc(size_t size)
 {
-    uint32_t guest_addr;
+    intptr_t guest_addr;
 
     guest_addr = target_mmap(0, size + sizeof(size), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (guest_addr == -1)
@@ -74,47 +82,47 @@ uint32_t qemu_android_malloc(size_t size)
     return guest_addr + sizeof(size);
 }
 
-void qemu_android_free(uint32_t addr)
+void qemu_android_free(intptr_t addr)
 {
     size_t size;
-    uint32_t guest_addr = addr - sizeof(size);
+    intptr_t guest_addr = addr - sizeof(size);
 
     if (copy_from_user(&size, guest_addr, sizeof(size)) == 0) {
         target_munmap(guest_addr, size);
     }
 }
 
-void qemu_android_memcpy(uint32_t dest, const void *src, size_t length)
+void qemu_android_memcpy(intptr_t dest, const void *src, size_t length)
 {
     copy_to_user(dest, (void *)src, length);
 }
 
-const char *qemu_android_get_string(uint32_t addr)
+const char *qemu_android_get_string(intptr_t addr)
 {
     return (const char *)lock_user_string(addr);
 }
 
-void qemu_android_release_string(const char *s, uint32_t addr)
+void qemu_android_release_string(const char *s, intptr_t addr)
 {
     unlock_user((void *)s, addr, 0);
 }
 
-void *qemu_android_get_memory(uint32_t addr, size_t length)
+void *qemu_android_get_memory(intptr_t addr, size_t length)
 {
     return lock_user(VERIFY_READ, addr, length, 1);
 }
 
-void qemu_android_release_memory(void *ptr, uint32_t addr, size_t length)
+void qemu_android_release_memory(void *ptr, intptr_t addr, size_t length)
 {
     unlock_user(ptr, addr, length);
 }
 
-uint32_t qemu_android_h2g(void *addr)
+intptr_t qemu_android_h2g(void *addr)
 {
     return h2g_nocheck(addr);
 }
 
-void *qemu_android_g2h(uint32_t addr)
+void *qemu_android_g2h(intptr_t addr)
 {
     return g2h(addr);
 }
@@ -129,61 +137,98 @@ void qemu_android_register_svc_handler(qemu_android_svc_handler_t func)
     svc_handler = func;
 }
 
-static void qemu_android_call_internal(CPUState *cpu, uint32_t addr, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, char *stack, int stack_size)
+#ifdef __LP64__
+#define REGS(x) env->xregs[x]
+#define SP_REG REGS(31)
+#define LR_REG REGS(30)
+#define PC_REG env->pc
+#else
+#define REGS(r) env->regs[r]
+#define SP_REG REGS(13)
+#define LR_REG REGS(14)
+#define PC_REG REGS(15)
+#endif
+
+static void qemu_android_call_internal(CPUState *cpu, intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size)
 {
     CPUArchState *env = cpu->env_ptr;
-    uint32_t saved_lr = env->regs[14];
-    uint32_t saved_pc = env->regs[15];
-    uint32_t saved_thumb = env->thumb;
 
-    ALOGV("calling: 0x%08x (0x%08x, 0x%08x, 0x%08x, 0x%08x, #%d)\n", addr, arg1, arg2, arg3, arg4, stack_size);
+    intptr_t saved_lr = LR_REG;
+    intptr_t saved_pc = PC_REG;
+#ifndef __LP64__
+    intptr_t saved_thumb = env->thumb;
+#endif
+
+#ifdef __LP64__
+#define HEXFMT "0x%016w64x"
+#else
+#define HEXFMT "0x%08w32x"
+#endif
+    ALOGV("calling: "HEXFMT" ("HEXFMT", "HEXFMT", "HEXFMT", "HEXFMT", "HEXFMT", "HEXFMT", "HEXFMT", "HEXFMT", #%d)\n", addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack_size);
+
+
 #ifdef LOG_NDEBUG
     if (stack) {
         ALOGV("  stack:");
         for (int i = 0; i < stack_size && i < 16; i += 4) ALOGV("    %08x\n", *(uint32_t*)&stack[i]);
     }
 #endif
-    env->regs[15] = addr & ~(target_ulong)1;
-    env->regs[14] = info->start_code;
-    env->regs[0] = arg1;
-    env->regs[1] = arg2;
-    env->regs[2] = arg3;
-    env->regs[3] = arg4;
+
+    PC_REG = addr & ~(target_ulong)1;
+    LR_REG = info->start_code;
+    REGS(0) = arg1;
+    REGS(1) = arg2;
+    REGS(2) = arg3;
+    REGS(3) = arg4;
+#ifdef __LP64__
+    REGS(4) = arg5;
+    REGS(5) = arg6;
+    REGS(6) = arg7;
+    REGS(7) = arg8;
+#endif
     if (stack) {
-        env->regs[13] -= stack_size;
-        memcpy_to_target(env->regs[13], stack, stack_size);
+        SP_REG -= stack_size;
+        memcpy_to_target(SP_REG, stack, stack_size);
     }
+#ifndef __LP64__
     env->thumb = addr & 1;
+#endif
     cpu->exception_index = -1;
     cpu_loop(env);
 
     if (stack) {
-        env->regs[13] += stack_size;
+        SP_REG += stack_size;
     }
 
-    env->regs[14] = saved_lr;
-    env->regs[15] = saved_pc;
+    LR_REG = saved_lr;
+    PC_REG = saved_pc;
+#ifndef __LP64__
     env->thumb = saved_thumb;
+#endif
     cpu->exception_index = -1;
 }
 
-uint32_t qemu_android_call5(void *_cpu, uint32_t addr, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, char *stack, int stack_size)
+intptr_t qemu_android_call9(void *_cpu, intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size)
 {
     CPUState *cpu = (CPUState *)_cpu;
     CPUArchState *env = cpu->env_ptr;
-    qemu_android_call_internal(cpu, addr, arg1, arg2, arg3, arg4, stack, stack_size);
-    return env->regs[0];
+    qemu_android_call_internal(cpu, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
+    return REGS(0);
 }
 
-uint64_t qemu_android_call5_ll(void *_cpu, uint32_t addr, uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, char *stack, int stack_size)
+uint64_t qemu_android_call9_ll(void *_cpu, intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size)
 {
+#ifdef __LP64__
+    return qemu_android_call9(_cpu, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
+#else
     CPUState *cpu = (CPUState *)_cpu;
     CPUArchState *env = cpu->env_ptr;
-    qemu_android_call_internal(cpu, addr, arg1, arg2, arg3, arg4, stack, stack_size);
+    qemu_android_call_internal(cpu, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
     uint64_t ret = env->regs[1];
     ret <<= 32;
     ret |= env->regs[0];
     return ret;
+#endif
 }
 
 void *qemu_android_get_cpu()
@@ -196,7 +241,8 @@ void *qemu_android_new_cpu()
     if (! thread_cpu && thread_allocate_) {
         CPUState *cpu;
         CPUArchState *env;
-        struct target_pt_regs regs1, *regs = &regs1;
+        struct target_pt_regs regs1;
+        struct target_pt_regs *regs = &regs1;
         TaskState *ts;
         abi_long sp, stackp, tlsp, thrp, retp;
         struct {
@@ -243,34 +289,39 @@ void *qemu_android_new_cpu()
 
         do_init_thread(regs, info);
         target_cpu_copy_regs(env, regs);
-        env->regs[13] = stackp;
+        SP_REG = stackp;
         cpu_set_tls(env, tlsp);
         env->pc_stop = info->start_code;
 
         ALOGV("Allocating new CPU thread");
         //qemu_set_log(CPU_LOG_TB_IN_ASM|qemu_str_to_log_mask(QEMU_LOG_MASK));
-        env->regs[0] = retp;
-        env->regs[1] = retp + sizeof(abi_long);
-        env->regs[2] = env->regs[3] = 0;
-        env->regs[14] = info->start_code;
-        env->regs[15] = thread_allocate_ & ~(target_ulong)1;
+        REGS(0) = retp;
+        REGS(1) = retp + sizeof(abi_long);
+/*      REGS(2) = 0;
+        REGS(3) = 0;*/
+        LR_REG = info->start_code;
+        PC_REG = thread_allocate_ & ~(target_ulong)1;
+#ifndef __LP64__
         env->thumb = thread_allocate_ & 1;
+#endif
+        thread_cpu = cpu;
+
         cpu_loop(env);
         //qemu_set_log(qemu_str_to_log_mask(QEMU_LOG_MASK));
 
-        if (env->regs[0] == 0) {
+        if (REGS(0) == 0) {
             alloc_result = (abi_long *) qemu_android_get_memory(retp, 2 * sizeof(abi_long));
             ALOGV("New CPU thread allocated: stack=%08x, tls=%08x", alloc_result[0], alloc_result[1]);
-            env->regs[13] = alloc_result[0];
+            SP_REG = alloc_result[0];
             cpu_set_tls(env, alloc_result[1]);
             qemu_android_release_memory(alloc_result, retp, 2 * sizeof(abi_long));
             target_munmap(sp, NEW_STACK_SIZE);
         }
         else {
-            ALOGE("CPU thread allocation failed: %d", env->regs[0]);
+            ALOGE("CPU thread allocation failed: %d", REGS(0));
         }
 
-        thread_cpu = cpu;
+//        thread_cpu = cpu;
 
         ALOGV("New CPU created = %p", thread_cpu);
     }
@@ -303,11 +354,12 @@ void qemu_android_delete_cpu(void *_cpu)
 
         ALOGV("Deallocating CPU thread");
         //qemu_set_log(CPU_LOG_TB_IN_ASM|qemu_str_to_log_mask(QEMU_LOG_MASK));
-        env->regs[0] = stackp;
-        env->regs[1] = sizep;
-        env->regs[2] = env->regs[3] = 0;
-        env->regs[14] = info->start_code;
-        env->regs[15] = thread_deallocate_ & ~(target_ulong)1;
+        REGS(0) = stackp;
+        REGS(1) = sizep;
+/*      REGS(2) = 0;
+        REGS(3) = 0;*/
+        LR_REG = info->start_code;
+        PC_REG = thread_deallocate_ & ~(target_ulong)1;
         env->thumb = thread_deallocate_ & 1;
         cpu_loop(env);
         //qemu_set_log(qemu_str_to_log_mask(QEMU_LOG_MASK));

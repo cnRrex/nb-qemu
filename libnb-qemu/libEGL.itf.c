@@ -2,8 +2,9 @@
 //#define LOG_NDEBUG 0
 
 #include <string.h>
-#include <cutils/log.h>
+#include <log/log.h>
 #include "libEGL.itf.h"
+#include "EGL_bio.h"
 
 typedef void (*glDiscardFramebufferEXT_t) (GLenum target, GLsizei numAttachments, const GLenum *attachments);
 typedef void (*glDebugMessageControlKHR_t) (GLenum source, GLenum type, GLenum severity, GLsizei count, const GLuint *ids, GLboolean enabled);
@@ -52,13 +53,13 @@ static struct {
 
 void* libEGL_eglGetProcAddress(const char *fname)
 {
-    if (fname == nullptr) {
-        return nullptr;
+    if (fname == NULL) {
+        return NULL;
     }
 #define DEFINE_EXT(name) \
     else if (strcmp(#name, fname) == 0) { \
-        if (sFuncTable.name == nullptr) { \
-            sFuncTable.name = (name ## _t) eglGetProcAddress(fname); \
+        if (sFuncTable.name == NULL) { \
+            sFuncTable.name = (name ## _t) bionic_eglGetProcAddress(fname); \
             ALOGD("eglGetProcAddress(%s) => %p", #name, sFuncTable.name); \
         } \
         return (void *) sFuncTable.name; \
@@ -83,7 +84,7 @@ DEFINE_EXT(glBlendBarrierKHR)
 #undef DEFINE_EXT
     else {
         ALOGE("Unsupported OpenGL extension: %s", fname);
-        return nullptr;
+        return NULL;
     }
 }
 

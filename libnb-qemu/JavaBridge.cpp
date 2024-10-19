@@ -38,26 +38,86 @@ thread_local JNIEnv *jni_env_ = nullptr;
 static JavaVM *java_vm_ = nullptr;
 static const android::NativeBridgeRuntimeCallbacks *runtime_ = nullptr;
 
-static uint32_t guest_jni_env_;
-static uint32_t guest_java_vm_;
+static intptr_t guest_jni_env_;
+static intptr_t guest_java_vm_;
 
 static std::map<std::string, std::shared_ptr<Trampoline>> native_methods_;
 
 #define ALIGN_DWORD(x) ((x+7)&(~7))
 
-typedef int32_t(*wrapper_fcn_t)(void *cpu_env,
-                                uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                                uint32_t arg4, uint32_t arg5);
+typedef intptr_t(*wrapper_fcn_t)(void *cpu_env,
+                                 intptr_t arg1, intptr_t arg2, intptr_t arg3,
+                                 intptr_t arg4, intptr_t arg5);
 
 #define WRAPPER(name) wrap_##name
 #define DEFINE_WRAPPER(name) \
-static int32_t WRAPPER(name)(void *cpu_env, \
-                             uint32_t arg1, uint32_t arg2, uint32_t arg3, \
-                             uint32_t arg4, uint32_t arg5)
+static intptr_t WRAPPER(name)(void *cpu_env, \
+                              intptr_t arg1, intptr_t arg2, intptr_t arg3, \
+                              intptr_t arg4, intptr_t arg5)
 
-int va_args_size(const char *sig, uint32_t start)
+#define GP_REG 0
+#define VECT_REG 1
+
+#ifdef __LP64__
+void aarch64_va_args_size(const char *sig, uintptr_t stack_start, int *_stack_size, int *_gr_size, int *_vr_size)
 {
-  uint32_t end = start;
+  int gr_size = 0;
+  int vr_size = 0;
+  intptr_t stack_end = stack_start;
+  for (int i = 0; sig[i]; i++) {
+    if (gr_size < 7 && (sig[i] == 'J' || sig[i] == 'L')) {
+      gr_size++;
+    } else if (vr_size < 7 && (sig[i] == 'D' || sig[i] == 'F')) {
+      vr_size++;
+    } else {
+      // NOTE: Variadic float arguments are promoted to double by the compiler.
+      if (sig[i] == 'J' || sig[i] == 'L' || sig[i] == 'D' || sig[i] == 'F') {
+          stack_end = ALIGN_DWORD(stack_end);
+          stack_end += 8;
+      }
+      else
+        stack_end += 4;
+    }
+  }
+  *_stack_size = (stack_end - stack_start);
+  *_gr_size = gr_size;
+  *_vr_size = vr_size;
+}
+
+typedef struct {
+  void * __stack;   // next stack param
+  void * __gr_top;  // end of GP arg reg save area
+  void * __vr_top;  // end of FP/SIMD arg reg save area
+  int32_t __gr_offs;   // offset from gr_top to next GP register arg
+  int32_t __vr_offs;   // offset from vr_top to next FP/SIMD register arg
+} aarch64_va_list;
+
+void *va_arg_aarch64(aarch64_va_list *ap, size_t size, int type) {
+  void *ret_val = NULL;
+
+  if (type == 0 && ap->__gr_offs < (8 * 8)) { // General purpose registers
+    ret_val = (char *)ap->__gr_top + ap->__gr_offs;
+    ap->__gr_offs += 8;
+  } else if (type == 1 && ap->__vr_offs < (8 * 16)) { // Floating point registers
+    ret_val = (char *)ap->__vr_top + ap->__vr_offs;
+    ap->__vr_offs += 16;
+  } else { // Stack
+    ret_val = ap->__stack;
+    ap->__stack = (char *)ap->__stack + size;
+  }
+
+  return ret_val;
+}
+
+#define va_prep_target()
+
+#define va_arg_target(ap, size, type) va_arg_aarch64(ap, size, type)
+
+#else
+
+int arm_va_args_size(const char *sig, uintptr_t start)
+{
+  intptr_t end = start;
   for (int i = 0; sig[i]; i++) {
       // NOTE: Variadic float arguments are promoted to double by the compiler.
       if (sig[i] == 'J' || sig[i] == 'D' || sig[i] == 'F') {
@@ -70,77 +130,80 @@ int va_args_size(const char *sig, uint32_t start)
   return (end - start);
 }
 
-void unpack_va_args(jmethodID mID, jvalue **jargs, uint32_t start)
+#define va_arg_target(args, size, type) ({ \
+  if(size == 8) { current = ALIGN_DWORD(current); } uintptr_t _current = current; current += size; (&args[_current-start]); \
+})
+#endif
+
+void unpack_va_args(jmethodID mID, jvalue **jargs, uintptr_t start)
 {
   const char *shorty = runtime_->getMethodShorty(jni_env_, mID);
   int nargs = strlen(shorty) - 1;
-  int size = va_args_size(&shorty[1], start);
-  QemuMemory::Region<char> args(start, size);
-  uint32_t current = start;
-
-#define DATA (&args[current-start])
-#define SKIP(n) current += n
-#define REALIGN current = ALIGN_DWORD(current)
+#ifdef __LP64__
+  QemuMemory::Region<aarch64_va_list> _aarch64_va_list(start);
+  int stack_size;
+  int gr_size;
+  int vr_size;
+  QemuMemory::Region<aarch64_va_list> __stack((uintptr_t)_aarch64_va_list.get()->__stack, stack_size);
+  QemuMemory::Region<aarch64_va_list> __gr_top((uintptr_t)_aarch64_va_list.get()->__gr_top, gr_size);
+  QemuMemory::Region<aarch64_va_list> __vr_top((uintptr_t)_aarch64_va_list.get()->__vr_top, vr_size);
+  aarch64_va_args_size(&shorty[1], (uintptr_t)_aarch64_va_list.get()->__stack, &stack_size, &gr_size, &vr_size);
+  aarch64_va_list _ap = {
+    .__stack = __stack.get(),
+    .__gr_top = __gr_top.get(),
+    .__vr_top = __vr_top.get(),
+    .__gr_offs = _aarch64_va_list.get()->__gr_offs,
+    .__vr_offs = _aarch64_va_list.get()->__vr_offs,
+  };
+  aarch64_va_list *ap = &_ap;
+#else
+  int size = arm_va_args_size(&shorty[1], start);
+  QemuMemory::Region<char> ap(start, size);
+  uintptr_t current = start;
+#endif
 
   *jargs = reinterpret_cast<jvalue *>(calloc(sizeof(jvalue), nargs));
   for (int i = 0; i < nargs; i++) {
       switch (shorty[i+1]) {
           case 'Z':
-            (*jargs)[i].z = *(jboolean*)DATA;
-            SKIP(4);
+            (*jargs)[i].z = *(jboolean*)va_arg_target(ap, sizeof(jint), GP_REG);
             ALOGV("  [z]: %s", (*jargs)[i].z ? "true" : "false");
             break;
           case 'B':
-            (*jargs)[i].b = *(jbyte*)DATA;
-            SKIP(4);
+            (*jargs)[i].b = *(jbyte*)va_arg_target(ap, sizeof(jint), GP_REG);
             ALOGV("  [b]: %02x", (*jargs)[i].b);
             break;
           case 'C':
-            (*jargs)[i].c = *(jchar*)DATA;
-            SKIP(4);
+            (*jargs)[i].c = *(jchar*)va_arg_target(ap, sizeof(jint), GP_REG);
             ALOGV("  [c]: %04x", (*jargs)[i].c);
             break;
           case 'S':
-            (*jargs)[i].s = *(jshort*)DATA;
-            SKIP(4);
+            (*jargs)[i].s = *(jshort*)va_arg_target(ap, sizeof(jint), GP_REG);
             ALOGV("  [s]: %d", (*jargs)[i].s);
             break;
           case 'I':
-            (*jargs)[i].i = *(jint*)DATA;
-            SKIP(4);
+            (*jargs)[i].i = *(jint*)va_arg_target(ap, sizeof(jint), GP_REG);
             ALOGV("  [i]: %d", (*jargs)[i].i);
             break;
           case 'J':
-            REALIGN;
-            (*jargs)[i].j = *(jlong*)DATA;
-            SKIP(8);
+            (*jargs)[i].j = *(jlong*)va_arg_target(ap, sizeof(jlong), GP_REG);
             ALOGV("  [j]: %lld", (*jargs)[i].j);
             break;
           case 'F':
             // NOTE: Variadic float arguments are promoted to double by the compiler.
-            REALIGN;
-            (*jargs)[i].f = *(jdouble*)DATA;
-            SKIP(8);
+            (*jargs)[i].f = *(jdouble*)va_arg_target(ap, sizeof(jdouble), VECT_REG);
             ALOGV("  [f]: %f", (*jargs)[i].f);
             break;
           case 'D':
-            REALIGN;
-            (*jargs)[i].d = *(jdouble*)DATA;
-            SKIP(8);
+            (*jargs)[i].d = *(jdouble*)va_arg_target(ap, sizeof(jdouble), VECT_REG);
             ALOGV("  [d]: %g", (*jargs)[i].d);
             break;
           default:
-            (*jargs)[i].l = *(jobject*)DATA;
-            SKIP(4);
+            (*jargs)[i].l = *(jobject*)va_arg_target(ap, sizeof(void *), GP_REG);
             ALOGV("  [l]: %p", (*jargs)[i].l);
             break;
       }
   }
-
-#undef DATA
-#undef SKIP
-#undef REALIGN
-
 }
 
 std::string unicode_to_string(const jchar *s, jsize len)
@@ -874,9 +937,9 @@ ACCESS_ARRAY_REGION(Float, jfloat, jfloatArray)
 ACCESS_ARRAY_REGION(Double, jdouble, jdoubleArray)
 
 typedef struct {
-    uint32_t name;
-    uint32_t signature;
-    uint32_t fnPtr;
+    intptr_t name;
+    intptr_t signature;
+    intptr_t fnPtr;
 } guest_JNINativeMethod;
 
 DEFINE_WRAPPER(RegisterNatives)
@@ -1052,6 +1115,10 @@ DEFINE_WRAPPER(GetObjectRefType)
 }
 
 static wrapper_fcn_t jni_env_wrapper_[] = {
+    [0] = 0,
+    [1] = 0,
+    [2] = 0,
+    [3] = 0,
     [4] = WRAPPER(GetVersion),
     [5] = WRAPPER(DefineClass),
     [6] = WRAPPER(FindClass),
@@ -1076,49 +1143,70 @@ static wrapper_fcn_t jni_env_wrapper_[] = {
     [25] = WRAPPER(NewLocalRef),
     [26] = WRAPPER(EnsureLocalCapacity),
     [27] = WRAPPER(AllocObject),
+    [28] = 0,
     [29] = WRAPPER(NewObjectV),
     [30] = WRAPPER(NewObjectA),
     [31] = WRAPPER(GetObjectClass),
     [32] = WRAPPER(IsInstanceOf),
     [33] = WRAPPER(GetMethodID),
+    [34] = 0,
     [35] = WRAPPER(CallObjectMethodV),
     [36] = WRAPPER(CallObjectMethodA),
+    [37] = 0,
     [38] = WRAPPER(CallBooleanMethodV),
     [39] = WRAPPER(CallBooleanMethodA),
+    [40] = 0,
     [41] = WRAPPER(CallByteMethodV),
     [42] = WRAPPER(CallByteMethodA),
+    [43] = 0,
     [44] = WRAPPER(CallCharMethodV),
     [45] = WRAPPER(CallCharMethodA),
+    [46] = 0,
     [47] = WRAPPER(CallShortMethodV),
     [48] = WRAPPER(CallShortMethodA),
+    [49] = 0,
     [50] = WRAPPER(CallIntMethodV),
     [51] = WRAPPER(CallIntMethodA),
+    [52] = 0,
     [53] = WRAPPER(CallLongMethodV),
     [54] = WRAPPER(CallLongMethodA),
+    [55] = 0,
     [56] = WRAPPER(CallFloatMethodV),
     [57] = WRAPPER(CallFloatMethodA),
+    [58] = 0,
     [59] = WRAPPER(CallDoubleMethodV),
     [60] = WRAPPER(CallDoubleMethodA),
+    [61] = 0,
     [62] = WRAPPER(CallVoidMethodV),
     [63] = WRAPPER(CallVoidMethodA),
+    [64] = 0,
     [65] = WRAPPER(CallNonvirtualObjectMethodV),
     [66] = WRAPPER(CallNonvirtualObjectMethodA),
+    [67] = 0,
     [68] = WRAPPER(CallNonvirtualBooleanMethodV),
     [69] = WRAPPER(CallNonvirtualBooleanMethodA),
+    [70] = 0,
     [71] = WRAPPER(CallNonvirtualByteMethodV),
     [72] = WRAPPER(CallNonvirtualByteMethodA),
+    [73] = 0,
     [74] = WRAPPER(CallNonvirtualCharMethodV),
     [75] = WRAPPER(CallNonvirtualCharMethodA),
+    [76] = 0,
     [77] = WRAPPER(CallNonvirtualShortMethodV),
     [78] = WRAPPER(CallNonvirtualShortMethodA),
+    [79] = 0,
     [80] = WRAPPER(CallNonvirtualIntMethodV),
     [81] = WRAPPER(CallNonvirtualIntMethodA),
+    [82] = 0,
     [83] = WRAPPER(CallNonvirtualLongMethodV),
     [84] = WRAPPER(CallNonvirtualLongMethodA),
+    [85] = 0,
     [86] = WRAPPER(CallNonvirtualFloatMethodV),
     [87] = WRAPPER(CallNonvirtualFloatMethodA),
+    [88] = 0,
     [89] = WRAPPER(CallNonvirtualDoubleMethodV),
     [90] = WRAPPER(CallNonvirtualDoubleMethodA),
+    [91] = 0,
     [92] = WRAPPER(CallNonvirtualVoidMethodV),
     [93] = WRAPPER(CallNonvirtualVoidMethodA),
     [94] = WRAPPER(GetFieldID),
@@ -1141,24 +1229,34 @@ static wrapper_fcn_t jni_env_wrapper_[] = {
     [111] = WRAPPER(SetFloatField),
     [112] = WRAPPER(SetDoubleField),
     [113] = WRAPPER(GetStaticMethodID),
+    [114] = 0,
     [115] = WRAPPER(CallStaticObjectMethodV),
     [116] = WRAPPER(CallStaticObjectMethodA),
+    [117] = 0,
     [118] = WRAPPER(CallStaticBooleanMethodV),
     [119] = WRAPPER(CallStaticBooleanMethodA),
+    [120] = 0,
     [121] = WRAPPER(CallStaticByteMethodV),
     [122] = WRAPPER(CallStaticByteMethodA),
+    [123] = 0,
     [124] = WRAPPER(CallStaticCharMethodV),
     [125] = WRAPPER(CallStaticCharMethodA),
+    [126] = 0,
     [127] = WRAPPER(CallStaticShortMethodV),
     [128] = WRAPPER(CallStaticShortMethodA),
+    [129] = 0,
     [130] = WRAPPER(CallStaticIntMethodV),
     [131] = WRAPPER(CallStaticIntMethodA),
+    [132] = 0,
     [133] = WRAPPER(CallStaticLongMethodV),
     [134] = WRAPPER(CallStaticLongMethodA),
+    [135] = 0,
     [136] = WRAPPER(CallStaticFloatMethodV),
     [137] = WRAPPER(CallStaticFloatMethodA),
+    [138] = 0,
     [139] = WRAPPER(CallStaticDoubleMethodV),
     [140] = WRAPPER(CallStaticDoubleMethodA),
+    [141] = 0,
     [142] = WRAPPER(CallStaticVoidMethodV),
     [143] = WRAPPER(CallStaticVoidMethodA),
     [144] = WRAPPER(GetStaticFieldID),
@@ -1252,9 +1350,9 @@ static wrapper_fcn_t jni_env_wrapper_[] = {
     [232] = WRAPPER(GetObjectRefType)
 };
 
-static int32_t syscall_jni_env(void *cpu_env, int num,
-                               uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                               uint32_t arg4, uint32_t arg5, uint32_t arg6)
+static intptr_t syscall_jni_env(void *cpu_env, int num,
+                               intptr_t arg1, intptr_t arg2, intptr_t arg3,
+                               intptr_t arg4, intptr_t arg5, intptr_t arg6)
 {
   wrapper_fcn_t func = jni_env_wrapper_[arg1];
   if (func)
@@ -1292,14 +1390,18 @@ DEFINE_WRAPPER(GetEnv)
 }
 
 static wrapper_fcn_t java_vm_wrapper_[] = {
+    [0] = 0,
+    [1] = 0,
+    [2] = 0,
+    [3] = 0,
     [4] = WRAPPER(AttachCurrentThread),
     [5] = WRAPPER(DetachCurrentThread),
     [6] = WRAPPER(GetEnv),
 };
 
-static int32_t syscall_java_vm(void *cpu_env, int num,
-                               uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                               uint32_t arg4, uint32_t arg5, uint32_t arg6)
+static intptr_t syscall_java_vm(void *cpu_env, int num,
+                               intptr_t arg1, intptr_t arg2, intptr_t arg3,
+                               intptr_t arg4, intptr_t arg5, intptr_t arg6)
 {
   wrapper_fcn_t func = java_vm_wrapper_[arg1];
   if (func)
@@ -1308,9 +1410,9 @@ static int32_t syscall_java_vm(void *cpu_env, int num,
   return -ENOSYS;
 }
 
-static int32_t syscall_handler(void *cpu_env, int num,
-                               uint32_t arg1, uint32_t arg2, uint32_t arg3,
-                               uint32_t arg4, uint32_t arg5, uint32_t arg6)
+static intptr_t syscall_handler(void *cpu_env, int num,
+                               intptr_t arg1, intptr_t arg2, intptr_t arg3,
+                               intptr_t arg4, intptr_t arg5, intptr_t arg6)
 {
     switch (num) {
         case 0x1000: return syscall_jni_env(cpu_env, num, arg1, arg2, arg3, arg4, arg5, arg6);
@@ -1338,7 +1440,7 @@ void initialize(const NativeBridgeRuntimeCallbacks *runtime)
   runtime_ = runtime;
 }
 
-uint32_t& wrap_jni_env(JNIEnv *env)
+intptr_t& wrap_jni_env(JNIEnv *env)
 {
   jni_env_ = env;
   if (jni_env_ && ! java_vm_)
@@ -1346,7 +1448,7 @@ uint32_t& wrap_jni_env(JNIEnv *env)
   return guest_jni_env_;
 }
 
-uint32_t& wrap_java_vm(JavaVM *vm)
+intptr_t& wrap_java_vm(JavaVM *vm)
 {
   if (java_vm_ && vm != java_vm_)
     ALOGW("JavaVM changed (%p != %p)", java_vm_, vm);
@@ -1358,7 +1460,7 @@ uint32_t& wrap_java_vm(JavaVM *vm)
 
 extern "C" {
 
-JNIEnv* unwrap_jni_env(uint32_t env)
+JNIEnv* unwrap_jni_env(intptr_t env)
 {
   ALOGI("unwrap_jni_env: %08x", env);
   if (env != guest_jni_env_)

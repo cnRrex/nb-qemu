@@ -21,26 +21,28 @@
 #ifndef LIBRARY_H_
 #define LIBRARY_H_
 
+#include <cstdint>
 #include <string>
 #include <map>
+#include <memory>
 
 class Trampoline;
 
 class Library
 {
 public:
-  Library(const std::string& name, uint32_t address);
+  Library(const std::string& name, intptr_t address);
   ~Library();
 
   void *get_handle() const;
   const std::string& get_name() const { return name_; }
-  uint32_t get_address() const { return address_; }
+  intptr_t get_address() const { return address_; }
   void add_trampoline(const std::shared_ptr<Trampoline>& tramp);
   std::shared_ptr<Trampoline> get_trampoline(const std::string& name) const;
 
 private:
   std::string name_;
-  uint32_t address_;
+  intptr_t address_;
   std::map<std::string, std::shared_ptr<Trampoline>> trampolines_;
 };
 

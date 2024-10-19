@@ -25,9 +25,9 @@
 
 namespace QemuMemory {
 
-inline uint32_t malloc(size_t size) { return qemu_android_malloc(size); }
-inline void free(uint32_t addr) { qemu_android_free(addr); }
-inline void memcpy(uint32_t dest, const void *src, size_t size) { qemu_android_memcpy(dest, src, size); }
+inline intptr_t malloc(size_t size) { return qemu_android_malloc(size); }
+inline void free(intptr_t addr) { qemu_android_free(addr); }
+inline void memcpy(intptr_t dest, const void *src, size_t size) { qemu_android_memcpy(dest, src, size); }
 
 class Malloc
 {
@@ -41,7 +41,7 @@ public:
         }
     }
 
-    uint32_t get_address() const { return addr_; }
+    intptr_t get_address() const { return addr_; }
     operator bool() const { return addr_ != 0; }
 
     void memcpy(const void *src, size_t size) {
@@ -49,13 +49,13 @@ public:
     }
 
 private:
-    uint32_t addr_;
+    intptr_t addr_;
 };
 
 class String
 {
 public:
-    String(uint32_t addr)
+    String(intptr_t addr)
         : addr_(addr),
           s_(reinterpret_cast<const char *>(qemu_android_get_string(addr))) {
     }
@@ -68,7 +68,7 @@ public:
     const char *c_str() const { return s_; }
 
 private:
-    uint32_t addr_;
+    intptr_t addr_;
     const char *s_;
 };
 
@@ -76,7 +76,7 @@ template<class T>
 class Region
 {
 public:
-    Region(uint32_t addr, size_t num = 1)
+    Region(intptr_t addr, size_t num = 1)
         : addr_(addr),
           size_(sizeof(T) * num),
           p_(reinterpret_cast<T *>(qemu_android_get_memory(addr_, size_))) {
@@ -91,7 +91,7 @@ public:
     const T& operator[] (int index) const { return p_[index]; }
 
 private:
-    uint32_t addr_;
+    intptr_t addr_;
     size_t size_;
     T *p_;
 };

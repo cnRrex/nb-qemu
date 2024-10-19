@@ -9,4 +9,5 @@
 	url = https://github.com/goffioul/ax86-nb-qemu-glib.git
 [submodule "qemu"]
 	path = qemu
-	url = https://github.com/goffioul/ax86-nb-qemu-qemu.git
+	url = https://gitlab.com/android_translation_layer/qemu-based-native-bridge/qemu.git
+	branch = master
