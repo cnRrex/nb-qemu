@@ -26,8 +26,7 @@ INCLUDES := -I$(CURRDIR)/_includes \
             -I$(CURRDIR)/../qemu/target/$(TARGETARCH)/
 
 LDLIBS := `pkgconf --libs glib-2.0 capstone` -lz -ldl -lffi -lgnutls
-LDLIBS += -L$(LIBDIR_PATH)/java/dex/art/natives/ -lnativehelper \
-          -L$(LIBDIR_PATH)/art -llog
+LDLIBS += -L$(LIBDIR_PATH)/art -lart -llog
 
 host-libs: $(BUILDDIR)/libnb-qemu.so \
            $(BUILDDIR)/libnb-qemu-android.so $(BUILDDIR)/libnb-qemu-EGL.so \

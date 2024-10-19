@@ -1,10 +1,15 @@
 #define LOG_TAG "libnb-qemu"
 
+#include <cstring>
 #include <dlfcn.h>
 #include <log/log.h>
 #include <mutex>
+#include <string>
+#include <nativebridge/native_bridge.h>
 #include "QemuCore.h"
 #include "OsBridge.h"
+
+extern struct NativeBridgeCallbacks NativeBridgeItf;
 
 enum {
     HANDLER_EGL,
@@ -22,6 +27,7 @@ struct HandlerInfo {
     QemuCore::svc_handler_t handler;
 };
 
+static std::string lib_dir;
 static std::mutex g_mutex_;
 /* using clean offsets is cool and all, but it would be much better for performance to just have one consecutive list that we can index into */
 static struct HandlerInfo g_handlers_[HANDLER_MAX] = {
@@ -38,7 +44,8 @@ static QemuCore::svc_handler_t get_handler_for_svc(int num) {
         int offset = num - g_handlers_[i].start;
         if (offset >= 0 && offset < g_handlers_[i].length) {
             if (g_handlers_[i].handler == nullptr) {
-                void *lib_handle = dlopen(g_handlers_[i].lib, RTLD_LAZY);
+                std::string thunk_lib_path = lib_dir + "/libnb-qemu-thunks/" + g_handlers_[i].lib;
+                void *lib_handle = dlopen(thunk_lib_path.c_str(), RTLD_LAZY);
                 if (lib_handle) {
                     g_handlers_[i].handler = reinterpret_cast<QemuCore::svc_handler_t>(dlsym(lib_handle, "nb_handle_svc"));
                 } else {
@@ -60,6 +67,21 @@ static void handle_svc(void *cpu_env, int num) {
 namespace OsBridge {
 
 bool initialize() {
+    Dl_info libnbqemu_so_dl_info;
+    // a symbol that this library exports
+    dladdr(&NativeBridgeItf, &libnbqemu_so_dl_info);
+    // make sure we didn't get NULL
+    if (libnbqemu_so_dl_info.dli_fname) {
+        // it's simpler if we can modify the string, so strdup it
+        char *libnbqemu_so_full_path = strdup(libnbqemu_so_dl_info.dli_fname);
+        *strrchr(libnbqemu_so_full_path, '/') = '\0'; // now we should have something like /usr/lib64/libnb-qemu
+	lib_dir = libnbqemu_so_full_path;
+	free(libnbqemu_so_full_path);
+    } else {
+        ALOGE("Couldn't get thunk dir with dladdr");
+        lib_dir = "";
+    }
+
     QemuCore::register_svc_handler(handle_svc);
     return true;
 }

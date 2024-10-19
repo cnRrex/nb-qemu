@@ -6,7 +6,7 @@ LIBDIR ?= lib64
 export LIBDIR_PATH := $(PREFIX)$(LIBDIR)
 
 INSTALL_PREFIX ?= $(PREFIX)
-INSTALL_DIR_HOST := $(INSTALL_PREFIX)/$(LIBDIR)/libnb-qemu/
+INSTALL_DIR_HOST_THUNKS := $(INSTALL_PREFIX)/$(LIBDIR)/libnb-qemu-thunks/
 INSTALL_DIR_TARGET := $(INSTALL_PREFIX)/share/libnb-qemu-guest/
 
 # i386/arm dirs sometimes contain files needed for the 64bit variant of the ISA as well
@@ -25,9 +25,8 @@ default:
 	$(MAKE) -C $(TOPDIR)/libnb-qemu-guest/ BIONIC_BUILDDDIR=$(BUILDDIR)/bionic
 
 install:
-	rm -rf $(INSTALL_DIR_HOST) $(INSTALL_DIR_TARGET)
-	install -Dt $(INSTALL_DIR_HOST) $(BUILDDIR)/libnb-qemu/libnb-qemu.so \
-	                                $(BUILDDIR)/libnb-qemu/libnb-qemu-android.so \
+	install -Dt $(INSTALL_PREFIX)/$(LIBDIR)/ $(BUILDDIR)/libnb-qemu/libnb-qemu.so
+	install -Dt $(INSTALL_DIR_HOST_THUNKS) $(BUILDDIR)/libnb-qemu/libnb-qemu-android.so \
 	                                $(BUILDDIR)/libnb-qemu/libnb-qemu-EGL.so \
 	                                $(BUILDDIR)/libnb-qemu/libnb-qemu-GLESv1_CM.so \
 	                                $(BUILDDIR)/libnb-qemu/libnb-qemu-GLESv2.so \
