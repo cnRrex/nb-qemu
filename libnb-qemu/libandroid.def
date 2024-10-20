@@ -1,4 +1,4 @@
-%base 0x0700
+%base 0
 %host:include <android/asset_manager_jni.h>
 %host:include <android/asset_manager.h>
 %host:include <android/configuration.h>

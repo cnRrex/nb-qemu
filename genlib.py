@@ -9,7 +9,7 @@ parser.add_argument('file', nargs=1)
 """
     [HANDLER_EGL] = { 0x0100, 99, "libnb-qemu-EGL.so", nullptr },
     [HANDLER_GLESV1_CM] = { 0x0400, 257, "libnb-qemu-GLESv1_CM.so", nullptr },
-    [HANDLER_GLESV3] = { 0x1000, 399, "libnb-qemu-GLESv2.so", nullptr },
+    [HANDLER_GLESV3] = { 0x1000, 399, "libnb-qemu-GLESv3.so", nullptr },
     [HANDLER_OPENSLES] = { 0x0600, 62, "libnb-qemu-OpenSLES.so", nullptr },
     [HANDLER_ANDROID] = { 0x0700, 74, "libnb-qemu-android.so", nullptr }
 """
@@ -24,8 +24,11 @@ parsed_args = parser.parse_args()
 # FIXME have this as an argument
 is64bit = True
 num_args_in_regs = 8 if is64bit else 4
+# first 5 MSBs differentiate among up to 32 thunked libraries,
+# the other 11 bits differentiate between up to 2048 functions in each library
+BASE_ADDRESS_SHIFT = 11
 
-base = parsed_args.b
+base = (parsed_args.b << BASE_ADDRESS_SHIFT)
 guest = parsed_args.g
 debug = parsed_args.d
 includes = parsed_args.i
@@ -48,7 +51,7 @@ with open(parsed_args.file[0]) as f:
                     raise ValueError('unknown command mode: %s' % cmdmode)
             if cmdmode is None or (cmdmode == 'host' and not guest) or (cmdmode == 'guest' and guest):
                 if cmd == 'base':
-                    base = int(cmdarg, 0)
+                    base = (int(cmdarg, 0) << BASE_ADDRESS_SHIFT)
                 elif cmd == 'include':
                     includes.append(cmdarg)
                 elif cmd == 'include_after':

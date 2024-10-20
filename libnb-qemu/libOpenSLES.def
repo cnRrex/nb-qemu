@@ -1,4 +1,4 @@
-%base 0x0600
+%base 4
 %host:include "libOpenSLES.itf.h"
 %guest:prefix __nb_
 

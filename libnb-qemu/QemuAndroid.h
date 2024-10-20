@@ -52,7 +52,7 @@ void qemu_android_register_syscall_handler(qemu_android_syscall_handler_t func);
 void *qemu_android_get_cpu();
 void *qemu_android_new_cpu();
 void qemu_android_delete_cpu(void *cpu);
-typedef void(*qemu_android_svc_handler_t)(void *cpu_env, int num);
+typedef void(*qemu_android_svc_handler_t)(void *cpu_env, uint16_t num);
 void qemu_android_register_svc_handler(qemu_android_svc_handler_t func);
 intptr_t qemu_android_h2g(void *addr);
 void *qemu_android_g2h(intptr_t addr);

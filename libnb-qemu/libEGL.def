@@ -1,4 +1,4 @@
-%base 0x0100
+%base 1
 %host:include <EGL/egl.h>
 %host:include <EGL/eglext.h>
 %host:include "libEGL.itf.h"
