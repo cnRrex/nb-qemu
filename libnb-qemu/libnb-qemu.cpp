@@ -29,10 +29,19 @@
 
 namespace android {
 
+const uint32_t nativeBridgeCallbackVersion = 5;
+
+//native_bridge_namespace_t is a type for native_bridge, maintain by native_bridge, so we can define its struct, like guest or host android_namespace_t
+//In v7 bridge we may need to getTrampoline for a functionPointer(registered via RegisterNatives), we need to judge if it is a guest function for us to exec
+
+/*
+ * Determine what abi we'll need to initialize
+ */
 static bool nb_qemu_initialize(const NativeBridgeRuntimeCallbacks* runtime_cbs, const char* private_dir, const char* instruction_set)
 {
     ALOGI("initialize");
-    if (QemuBridge::initialize("libnb-qemu"/*getprogname()*/, private_dir)) {
+    if (!QemuCore::initialize(private_dir, instruction_set)) {
+        QemuBridge::initialize();
         JavaBridge::initialize(runtime_cbs);
         OsBridge::initialize();
         return true;
@@ -61,13 +70,13 @@ static bool nb_qemu_isSupported(const char *libpath)
 static const struct NativeBridgeRuntimeValues *nb_qemu_getAppEnv(const char *abi)
 {
     ALOGI("getAppEnv: %s", abi);
-    return nullptr;
+    return QemuBridge::getAppEnv(abi);
 }
 
 static bool nb_qemu_isCompatibleWith(uint32_t version)
 {
     ALOGI("isCompatibleWith: %u", version);
-    return version <= 4;
+    return version <= nativeBridgeCallbackVersion;
 }
 
 static NativeBridgeSignalHandlerFn nb_qemu_getSignalHandler(int signal)
@@ -136,11 +145,18 @@ static struct native_bridge_namespace_t* nb_qemu_getExportedNamespace(const char
     return nullptr;
 }
 
+static void nb_qemu_preZygoteFork(void)
+{
+    //TODO: close guest memfd, log handle and other things
+    ALOGI("preZygoteFork: %s");
+    return nullptr;
+}
+
 extern "C" {
 
 NativeBridgeCallbacks NativeBridgeItf = {
     // v1
-    .version = 4,
+    .version = nativeBridgeCallbackVersion,
     .initialize = nb_qemu_initialize,
     .loadLibrary = nb_qemu_loadLibrary,
     .getTrampoline = nb_qemu_getTrampoline,
@@ -162,6 +178,11 @@ NativeBridgeCallbacks NativeBridgeItf = {
     .getVendorNamespace = nb_qemu_getVendorNamespace,
     // v5
     .getExportedNamespace = nb_qemu_getExportedNamespace,
+    // v6
+    .preZygoteFork = nb_qemu_preZygoteFork;
+    // v7
+    //getTrampolineWithJNICallType: add jni_call_type
+    //getTrampolineForFunctionPointer: no handle, no name, it pass in a JNI method
 };
 
 };

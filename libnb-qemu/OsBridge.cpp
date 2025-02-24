@@ -9,10 +9,23 @@
 #include "QemuCore.h"
 #include "OsBridge.h"
 
+//TODO: All public library need proxy, partial or fully bridge
+
+//design: need special_tramp and gen_tramp, build the two one to one lib.
+//To have a better compability, gen the android info and dlsym header, copy neccesary header, then we dont need to build with aosp
+//To have much more android compability, each simbol need separate by android version. all infomation will place a folder
+//How to regconize android and use the right one, or if it failed, what should we do? and what if svc num changed?
+
+// For temp test just keep it, and switch to new itf.
+
+//TODO: use pyelftools DWARF analysis
+
+
 extern struct NativeBridgeCallbacks NativeBridgeItf;
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
+//Drop this and use gen_num register_num instead
 #define BASE_ADDRESS_SHIFT 11
 
 /* !! keep these synced with the %base directive in the .def files */

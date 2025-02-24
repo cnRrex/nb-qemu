@@ -21,6 +21,8 @@
 #ifndef QEMU_CPU_H_
 #define QEMU_CPU_H_
 
+#include "QemuCore.h"
+
 class QemuCpu
 {
 public:
@@ -34,8 +36,6 @@ public:
     intptr_t call(intptr_t addr, intptr_t arg1, intptr_t arg2) const { return call(addr, arg1, arg2, 0, 0, 0, 0, 0, 0, nullptr, 0); }
     intptr_t call(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3) const { return call(addr, arg1, arg2, arg3, 0, 0, 0, 0, 0, nullptr, 0); }
     intptr_t call(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4) const { return call(addr, arg1, arg2, arg3, arg4, 0, 0, 0, 0, nullptr, 0); }
-    intptr_t call(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size) const;
-    uint64_t call64(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size) const;
 
 private:
     static thread_local QemuCpu local_cpu_;

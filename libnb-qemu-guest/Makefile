@@ -26,6 +26,7 @@ $(BUILDDIR)/libnb-qemu-guest.so: $(CURRDIR)/bionic/libc/arch-common/bionic/crtbe
 	clang $(CROSSFLAGS) $(LDFLAGS) $(LDFLAGS_MAIN) $(LDLIBS) $(CFLAGS) $(INCLUDES) -o $@ $^ \
 	      -x c - <<< "const char interp_section[] __attribute__((section(\".interp\"))) = \"/linker64\";"
 
+#gen guest thunk lib
 $(BUILDDIR)/%.c : $(TOPDIR)/libnb-qemu/%.def $(TOPDIR)/genlib.py | $(BUILDDIR)
 	$(TOPDIR)/genlib.py -g $< > $@
 

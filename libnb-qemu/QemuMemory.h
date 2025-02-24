@@ -21,23 +21,23 @@
 #ifndef QEMU_MEMORY_H_
 #define QEMU_MEMORY_H_
 
-#include "QemuAndroid.h"
+#include "QemuCore.h"
 
 namespace QemuMemory {
 
-inline intptr_t malloc(size_t size) { return qemu_android_malloc(size); }
-inline void free(intptr_t addr) { qemu_android_free(addr); }
-inline void memcpy(intptr_t dest, const void *src, size_t size) { qemu_android_memcpy(dest, src, size); }
+inline intptr_t malloc(size_t size) { return QemuCore::malloc(size); }
+inline void free(intptr_t addr) { QemuCore::free(addr); }
+inline void memcpy(intptr_t dest, const void *src, size_t size) { QemuCore::memcpy(dest, src, size); }
 
 class Malloc
 {
 public:
     Malloc(size_t size)
-        : addr_(qemu_android_malloc(size)) {
+        : addr_(QemuCore::malloc(size)) {
     }
     ~Malloc() {
         if (addr_) {
-            qemu_android_free(addr_);
+            QemuCore::free(addr_);
         }
     }
 
@@ -45,7 +45,7 @@ public:
     operator bool() const { return addr_ != 0; }
 
     void memcpy(const void *src, size_t size) {
-        qemu_android_memcpy(addr_, src, size);
+        QemuCore::memcpy(addr_, src, size);
     }
 
 private:
@@ -57,11 +57,11 @@ class String
 public:
     String(intptr_t addr)
         : addr_(addr),
-          s_(reinterpret_cast<const char *>(qemu_android_get_string(addr))) {
+          s_(reinterpret_cast<const char *>(QemuCore::get_string(addr))) {
     }
     ~String() {
         if (s_) {
-            qemu_android_release_string(s_, addr_);
+            QemuCore::release_string(s_, addr_);
         }
     }
 
@@ -79,11 +79,11 @@ public:
     Region(intptr_t addr, size_t num = 1)
         : addr_(addr),
           size_(sizeof(T) * num),
-          p_(reinterpret_cast<T *>(qemu_android_get_memory(addr_, size_))) {
+          p_(reinterpret_cast<T *>(QemuCore::get_memory(addr_, size_))) {
     }
     ~Region() {
         if (p_) {
-            qemu_android_release_memory(p_, addr_, size_);
+            QemuCore::release_memory(p_, addr_, size_);
         }
     }
 

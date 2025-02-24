@@ -18,17 +18,18 @@
  *
  */
 
-#include "QemuAndroid.h"
+#include "QemuCore.h"
 #include "QemuCpu.h"
+#include "ArchSpecific.h"
 
 thread_local QemuCpu QemuCpu::local_cpu_;
 
 QemuCpu* QemuCpu::get()
 {
     if (! local_cpu_.cpu_) {
-        void *cpu = qemu_android_get_cpu();
+        void *cpu = QemuCore::get_cpu();
         if (! cpu) {
-            local_cpu_.cpu_ = qemu_android_new_cpu();
+            local_cpu_.cpu_ = QemuCore::new_cpu();
             local_cpu_.managed_ = true;
         }
         else {
@@ -47,16 +48,24 @@ QemuCpu::QemuCpu()
 QemuCpu::~QemuCpu()
 {
     if (managed_) {
-        qemu_android_delete_cpu(cpu_);
+        QemuCore::delete_cpu(cpu_);
     }
 }
 
+void QemuCpu::call(intptr_t addr, struct QemuAndroidCallData *data, struct QemuAndroidCallRet *ret) const
+{
+    QemuCore::call(cpu_, addr, data, ret); //qemuAndroid call
+}
+
+//we dont support fastcall from now, the QemuBridge Itf will become fix tramp to use
+
+
 intptr_t QemuCpu::call(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size) const
 {
-    return qemu_android_call9(cpu_, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
+    return QemuCore::call9(cpu_, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
 }
 
 uint64_t QemuCpu::call64(intptr_t addr, intptr_t arg1, intptr_t arg2, intptr_t arg3, intptr_t arg4, intptr_t arg5, intptr_t arg6, intptr_t arg7, intptr_t arg8, char *stack, int stack_size) const
 {
-    return qemu_android_call9_ll(cpu_, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
+    return QemuCore::call9_ll(cpu_, addr, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, stack, stack_size);
 }

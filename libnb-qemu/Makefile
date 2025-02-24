@@ -55,6 +55,7 @@ LDLIBS_THUNKS := -L$(BUILDDIR)/ -lnb-qemu \
                  -L$(LIBDIR_PATH)/art -llog
 DEFINES_LIBANDROID := -D_LARGEFILE64_SOURCE -D__ANDROID_API__=100 # the headers gate some declarations
 
+#gen host thunk lib
 $(BUILDDIR)/%.c : $(CURRDIR)/%.def $(TOPDIR)/genlib.py
 	$(TOPDIR)/genlib.py $< > $@
 

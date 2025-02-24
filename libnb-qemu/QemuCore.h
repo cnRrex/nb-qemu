@@ -21,17 +21,29 @@
 #ifndef QEMU_CORE_H_
 #define QEMU_CORE_H_
 
-#include "QemuAndroid.h"
+#include "qemu_android_interface.h"
+/*
+ * QemuAndroid has move entirely to qemu and becoming a interface,
+ * so QemuCore should handle the interface or be moved in QemuBridge
+ * For future this should handle multi guest abi for qemu bridge
+ */
+
+const char* AppPackageName;
 
 namespace QemuCore {
 
 using syscall_handler_t = ::qemu_android_syscall_handler_t;
 using svc_handler_t = ::qemu_android_svc_handler_t;
 
-inline bool initialize(const char *procname, const char *tmpdir) { return qemu_android_initialize(procname, tmpdir) == 0; }
-inline intptr_t lookup_symbol(const char *name) { return qemu_android_lookup_symbol(name); }
-inline void register_syscall_handler(syscall_handler_t func) { qemu_android_register_syscall_handler(func); }
-inline void register_svc_handler(svc_handler_t func) { qemu_android_register_svc_handler(func); }
+int initialize(const char *procname, const char *tmpdir);
+inline intptr_t lookup_symbol(const char *name);
+
+inline void register_syscall_handler(syscall_handler_t func);
+inline void register_svc_handler(svc_handler_t func);
+inline void* get_cpu(void);
+inline void* new_cpu(void);
+inline int delete_cpu(void *cpu);
+inline void call(void *cpu, intptr_t addr, struct QemuAndroidCallData *data, struct QemuAndroidCallRet *ret);
 
 }
 

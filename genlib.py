@@ -127,7 +127,7 @@ def genHostLib():
 %s
 #include <stdint.h>
 #include <log/log.h>
-#include "QemuInclude.h"''' % ("#define LOG_NDEBUG 0\n" if debug else ''))
+#include "QemuCoreInclude.h"''' % ("#define LOG_NDEBUG 0\n" if debug else ''))
 
     if includes:
         for inc in includes:
@@ -154,7 +154,7 @@ def genHostLib():
 
     for i, func in enumerate(functions):
         print('void nb_handle_%s(CPUARMState *env) {' % func['name'])
-        print('    char *sp = g2h(SP_REG);')
+        print('    char *sp = nb_qemu_g2h(SP_REG);')
         ret_type, ret_size = getArgumentTypeAndSize(func['return'], lineno=func['lineno'])
         if ret_size:
             print('    %s __nb_ret = (%s)%s(' % (ret_type, ret_type, func['name']))
@@ -193,7 +193,7 @@ def genHostLib():
         if ret_size:
             if is64bit or ret_size <= 4:
                 if isPointerType(func['return']):
-                    print('    REGS(0) = h2g_nocheck(__nb_ret);')
+                    print('    REGS(0) = nb_qemu_h2g(__nb_ret);')
                 elif is64bit and isFloatType(func['return']):
                     print('    *(%s*)&env->vfp.zregs[0] = __nb_ret;' % (func['return']))
                 elif ret_size == 4:

@@ -35,6 +35,7 @@
 #include "QemuCpu.h"
 #include "QemuMemory.h"
 #include "Trampoline.h"
+#include "ArchSpecific.h"
 
 #ifdef __ANDROID__
 using android::base::Split;
@@ -46,6 +47,8 @@ bool StartsWith(std::string str, std::string start)
     return !strncmp(str.c_str(), start.c_str(), start.length());
 }
 
+
+/* This Just like ... a class of g_ndkt_bridge*/
 class QemuBridgeImpl
 {
 public:
@@ -53,7 +56,7 @@ public:
     ~QemuBridgeImpl() {}
 
 public:
-    bool initialize(const std::string& procname, const std::string& tmpdir);
+    bool initialize(void);
     bool is_path_supported(const std::string& path) const;
     void *load_library(const std::string& filename, void *ns);
     void *get_trampoline(void *lib_handle, const std::string& name, const std::string& shorty);
@@ -84,9 +87,9 @@ private:
 };
 static std::shared_ptr<QemuBridgeImpl> impl_;
 
-bool QemuBridgeImpl::initialize(const std::string& procname, const std::string& tmpdir)
+bool QemuBridgeImpl::initialize()
 {
-    if (QemuCore::initialize(procname.c_str(), tmpdir.c_str())) {
+    //if (QemuCore::initialize(procname.c_str(), tmpdir.c_str())) {
         initialize_ = QemuCore::lookup_symbol("nb_qemu_initialize");
         ALOGV("QemuBridge::initialize_: %p", reinterpret_cast<void *>(initialize_));
         load_library_ = QemuCore::lookup_symbol("nb_qemu_loadLibrary");
@@ -97,17 +100,17 @@ bool QemuBridgeImpl::initialize(const std::string& procname, const std::string& 
         ALOGV("QemuBridge::allocate_thread_: %p", reinterpret_cast<void *>(allocate_thread_));
         get_error_ = QemuCore::lookup_symbol("nb_qemu_getError");
         ALOGV("QemuBridge::get_error_: %p", reinterpret_cast<void *>(get_error_));
-/*      create_namespace_ = QemuCore::lookup_symbol("nb_qemu_createNamespace");
+        create_namespace_ = QemuCore::lookup_symbol("nb_qemu_createNamespace");
         ALOGV("QemuBridge::create_namespace_: %p", reinterpret_cast<void *>(create_namespace_));
         link_namespaces_ = QemuCore::lookup_symbol("nb_qemu_linkNamespaces");
         ALOGV("QemuBridge::link_namespaces_: %p", reinterpret_cast<void *>(link_namespaces_));
         init_anonymous_namespace_ = QemuCore::lookup_symbol("nb_qemu_initAnonymousNamespace");
-        ALOGV("QemuBridge::init_anonymous_namespace_: %p", reinterpret_cast<void *>(init_anonymous_namespace_));*/
+        ALOGV("QemuBridge::init_anonymous_namespace_: %p", reinterpret_cast<void *>(init_anonymous_namespace_));
         if (initialize_) {
             QemuCpu::get()->call(initialize_);
             return true;
         }
-    }
+    //}
     return false;
 }
 
@@ -117,11 +120,25 @@ bool QemuBridgeImpl::is_path_supported(const std::string& path) const
     if (path.empty())
         return false;
 
+    //TODO: arch related?
+    //usually a path may contains ":", contains "bask.apk!"(package), or /lib/(arch)
+    // /system/fake-libs64 /data/app/***/base.apk!/lib/arm64-v8a/
+
     for (auto& s : Split(path, ":")) {
-        if (EndsWith(s, "/arm") || EndsWith(s, "/armeabi-v7a") || EndsWith(s, "/fake-libs"))
-            continue;
-        else
-            return false;
+        for (auto& support_path : Split(arch_values[GuestIsa].path_supported_substring, ":")){
+            // this loop check every support_path, only when one test pass, it break, otherwise it go ahead.
+            if(EndsWith(s, support_path))
+                goto s_is_supported;
+        }
+        //when support_path check and reach here, meaning this s is not supported
+        return false;
+        s_is_supported:
+        continue;
+        // if (
+        //     (s, "/arm") || EndsWith(s, "/armeabi-v7a") || EndsWith(s, "/fake-libs"))
+        //     continue;
+        // else
+        //     return false;
     }
 
     return true;
@@ -275,13 +292,18 @@ bool QemuBridgeImpl::link_namespaces(void *from, void *to, const char *shared_li
   return QemuCpu::get()->call(link_namespaces_, (intptr_t) from, (intptr_t) to, (intptr_t) shared_libs_sonames);
 }
 
+
+
 namespace QemuBridge {
 
-bool initialize(const std::string& procname, const std::string& tmpdir)
+//Usually only one place to initialze, so dont allocate it dynamically
+// Or related to arch?
+
+bool initialize()
 {
     QemuBridgeImpl *impl = new QemuBridgeImpl();
 
-    if (impl->initialize(procname, tmpdir)) {
+    if (impl->initialize()) {
         impl_.reset(impl);
         return true;
     }
@@ -294,7 +316,16 @@ bool initialize(const std::string& procname, const std::string& tmpdir)
 bool is_supported(const std::string& /* libpath */)
 {
     // Not implemented
-    return false;
+    // usually, check if the environment have the permission to open and read/lseek the lib
+    return true;
+}
+
+const struct NativeBridgeRuntimeValues *getAppEnv(const char *abi){
+    if(!strcmp(abi, GuestIsa)){
+        return arch_values[abi].runtime_values;
+    }
+    ALOGE("getAppEnv: unexpected isa %s, expect %s", abi, GuestIsa);
+    return nullptr;
 }
 
 bool is_path_supported(const std::string& path)
@@ -337,4 +368,4 @@ bool link_namespaces(void *from, void *to, const char *shared_libs_sonames)
   return impl_->link_namespaces(from, to, shared_libs_sonames);
 }
 
-}
+}//namespace QemuBridge

@@ -25,13 +25,45 @@
 #include <string.h>
 #include <log/log.h>
 #include "JavaBridge.h"
-#include "QemuAndroid.h"
+#include "QemuCore.h"
 #include "QemuCpu.h"
 #include "QemuMemory.h"
 #include "Trampoline.h"
 
+/*
+see dyn (dyncall): https://metacpan.org/pod/Dyn
+
+Type
+
+Signature character     C/C++ data type
+----------------------------------------------------
+v                       void
+B                       _Bool, bool ###
+c                       char
+C                       unsigned char
+s                       short
+S                       unsigned short
+i                       int
+I                       unsigned int
+j                       long ###
+J                       unsigned long ###
+l                       long long, int64_t
+L                       unsigned long long, uint64_t
+f                       float
+d                       double
+p                       void *
+Z                       const char * (pointer to a C string) ###
+A                       aggregate (struct/union described out-of-band via DCaggr)
+
+*/
+/*
+ * We haven't support *struct* and some complex type, and VA function, it need more research
+ */
+
+
 static ffi_type *type_to_ffi(const char t)
 {
+  //TODO: long double and complex type
   switch (t) {
     case 'c': return &ffi_type_sint8;
     case 'C': return &ffi_type_uint8;
@@ -82,6 +114,127 @@ static std::string shorty_to_signature(const std::string& shorty)
   return signature;
 }
 
+/******  Trampoline Arg data  ******/
+//NOTE: every thread call allocate for once, alloc pointer store in pthread key
+QemuAndroidCallData* Trampoline::alloc_call_data(int stack_size, int int_regs_used, int float_regs_used)
+{
+    QemuAndroidCallData *data;
+    data = new QemuAndroidCallData();
+    //allocate regs, if used is -1 mean default, we dont need allocate only when 0
+    switch(GuestIsa){
+        case "arm":{
+            if(int_regs_used != 0)
+                data->int32_regs = new uint32_t[4](); //all pass in 4 regs
+            break;
+        }
+        case "arm64":{
+            if(int_regs_used != 0)
+                data->int64_regs = new uint64_t[8](); // 8 regs
+            if(float_regs_used != 0)
+                data->float128_regs = new QA_UInt128[8](); // 8 vfp 128-bit regs
+            break;
+        }
+        case "x86":{
+            //x86 pass args by stack;
+            break;
+        }
+        case "x86_64":{
+            if(int_regs_used != 0)
+                data->int64_regs = new uint64_t[6](); // 6 regs
+            if(float_regs_used != 0)
+                data->float128_regs = new QA_UInt128[8](); // 8 xmm 128-bit regs
+            break;
+        }
+        case "riscv64"{
+            if(int_regs_used != 0)
+                data->int64_regs = new uint64_t[8](); // 8 gpr
+            if(float_regs_used != 0)
+                data->float64_regs = new uint64_t[8](); // 8 64-bit fpr
+            break;
+        }
+        default:
+            delete data;
+            return nullptr;
+    }
+    if(stack_size){
+        data->stack = reinterpret_cast<char *>(calloc(stack_size, 1));
+    }
+    data->int_regs_used = int_regs_used;
+    data->float_regs_used = float_regs_used;
+    return data;
+}
+
+void Trampoline::free_call_data(QemuAndroidCallData* data)
+{
+    if(data){
+        free(data->stack);
+        delete data->int32_regs;
+        delete data->int64_regs;
+        delete data->float32_regs;
+        delete data->float64_regs;
+        delete data->float128_regs;
+        delete data;
+    }
+}
+
+QemuAndroidCallRet* Trampoline::alloc_call_ret(enum retProcessType ret_type)
+{
+    QemuAndroidCallRet *ret;
+    ret = new QemuAndroidCallRet();
+    if(ret_type) ret->ret_type = ret_type;
+    return ret;
+}
+
+void Trampoline::free_call_ret(QemuAndroidCallRet* ret)
+{
+    delete ret;
+}
+
+//no check TODO: check failed
+QemuAndroidCallData* Trampoline::get_call_data()
+{
+    QemuAndroidCallData* data = static_cast<QemuAndroidCallData*>(pthread_getspecific(call_data_key_));
+    if (!data) {
+        data = Trampoline::alloc_call_data(stacksize_, int_regs_used_, float_regs_used_);
+        if(data)
+          pthread_setspecific(call_data_key_, data);
+        else
+          abort();
+    }
+    return data;
+}
+
+QemuAndroidCallRet* Trampoline::get_call_ret()
+{
+    QemuAndroidCallRet* ret = static_cast<QemuAndroidCallRet*>(pthread_getspecific(call_ret_key_));
+    if (!ret) {
+        ret = Trampoline::alloc_call_ret(ret_type_);
+        if(ret)
+          pthread_setspecific(call_ret_key_, ret);
+        else
+          abort();
+    }
+    return ret;
+}
+
+/**
+ * QemuAndroid have calling_conventions about what regs the return type use.
+ * when calling, QemuAndroid return the guest addr maybe
+ * In build tramp we should handle...
+ * 1. what regs will each args use
+ * 2. how many, and size?
+ * 3. if contains pointer then? usually if data is from host, then the pointer need h2g,
+ * 4. the stack alignment
+ * 5. where to get ret
+ *
+ * In call we should handle...
+ * 1. use the handled database to copy args to CallData or CallRet to ret
+ * 2. if contains pointer then?
+ */
+
+/******  Class Trampoline  ******/
+
+//allocate a trampoline: use the given guest addr and fcn signature to build a callable ffi_tramp
 Trampoline::Trampoline(const std::string& name, intptr_t address, const std::string& signature)
      : name_(name),
        address_(address),
@@ -93,26 +246,232 @@ Trampoline::Trampoline(const std::string& name, intptr_t address, const std::str
        nargs_(0),
        nstackargs_(0),
        stacksize_(0),
-       stackoffsets_(nullptr)
-
+       //stackoffsets_(nullptr),
+       int_regs_used_(0),
+       float_regs_used_(0),
+       arg_store_type_(nullptr),
+       arg_store_offsets_(nullptr)
 {
   void *code_address = nullptr;
 
+#define ALIGN_DOWN(x, align) ((x)&(~(align-1))
+#define ALIGN_UP(x, align) ALIGN_DOWN(x+align-1, align)
 #define ALIGN_DWORD(x) ((x+7)&(~7))
+#define ALIGN_QWORD(x) ((x+15)&(~15))
 
   closure_ = reinterpret_cast<ffi_closure *>(ffi_closure_alloc(sizeof(ffi_closure), &code_address));
   if (closure_) {
       if (! signature.empty()) {
           nargs_ = signature.length() - 1;
           rtype_ = type_to_ffi(signature[0]);
-          if (! rtype_)
+          if (! rtype_) //must have this to ensure build things up
             return;
+          rtype_char_ = signature[0];
           argtypes_ = reinterpret_cast<ffi_type **>(calloc(sizeof(ffi_type *), nargs_));
+          arg_store_type_ = reinterpret_cast<enum argProcessType *>(calloc(sizeof(enum argProcessType), nargs_));
+          arg_store_offsets_ = reinterpret_cast<int *>(calloc(sizeof(int), nargs_));
+          //Calling convention
+          //handle args and ret_type determined by GuestIsa
+          switch(GuestIsa){
+            case "arm":{
+              //prepare arg
+              for (int i = 0; i < nargs_; i++) {
+                  argtypes_[i] = type_to_ffi(signature[i+1]);
+                  if (! argtypes_[i])
+                    return;
+                  switch (signature[i+1]) { //check target type, if in 64host-32guest, check argtypes_[i]->size to handle thunk
+                    case 'v': //void TODO: should not reach here
+                      break;
+                    case 'c': //char
+                    case 'C': //uchar
+                    case 's'; //short
+                    case 'S': //ushort
+                    case 'i': //int
+                    case 'I': //uint
+                    case 'f': //float
+                      if (int_regs_used_ < 4) {
+                        arg_store_type_[i] = ARG_TYPE_INT32_REG;
+                        arg_store_offsets_[i] = int_regs_used_;
+                        int_regs_used_++;
+                      }else{
+                        arg_store_type_[i] = ARG_TYPE_STACK32;
+                        arg_store_offsets_[i] = stacksize_;
+                        stacksize_ += 4;
+                      }
+                      break;
+                    case 'l': //int64
+                    case 'L': //uint64
+                    case 'd': //double
+                      if (int_regs_used_ < 4) {
+                        //first check alignment
+                        if (int_regs_used_ % 2) //when 1 or 3, remain 1 reg
+                            int_regs_used_++;//reg alignment
+                      }
+                      if (int_regs_used_ < 4) //after alignment, int_regs_used_ is 0 or 2 or 4
+                          arg_store_type_[i] = ARG_TYPE_INT32_REG_DOUBLE;
+                          arg_store_offsets_[i] = int_regs_used_;
+                          int_regs_used_+=2;
+                      }else{
+                        stacksize_ = ALIGN_UP(stacksize_, 8);//when 8 byte type, align the stack size
+                        arg_store_type_[i] = ARG_TYPE_STACK64;
+                        arg_store_offsets_[i] = stacksize_;
+                        stacksize_ += 8;
+                      }
+                      break;
+                    case 'p': //pointer
+                      if (int_regs_used_ < 4) {
+                        arg_store_type_[i] = ARG_TYPE_INT32_REG_PTR;
+                        arg_store_offsets_[i] = int_regs_used_;
+                        int_regs_used_++;
+                      }else{
+                        arg_store_type_[i] = ARG_TYPE_STACK32_PTR;
+                        arg_store_offsets_[i] = stacksize_;
+                        stacksize_ += 4;
+                      }
+                      break;
+                    default:
+                      //TODO: handle other type and struct
+                      //when size is over 8, alignment in stack is still keep 8
+                  }//switch sig
+              }//for arg
+              // The whole stack of arguments must be double-word aligned
+              if (stacksize_) {
+                stacksize_ = ALIGN_UP(stacksize_, 8);
+              }
+              //prepare ret_type_ in armv7-androideabi
+              switch(rtype_char_){
+                case 'v': //void
+                  ret_type_ = RET_TYPE_VOID;
+                  break;
+                case 'c': //char
+                case 'C': //uchar
+                case 's'; //short
+                case 'S': //ushort
+                case 'i': //int
+                case 'I': //uint
+                case 'f': //float
+                case 'p': //pointer
+                  ret_type_ = RET_TYPE_INT_REG_32;
+                  break;
+                case 'l': //int64
+                case 'L': //uint64
+                case 'd': //double
+                  ret_type_ = RET_TYPE_INT_REG_64;
+                  break;
+                default:
+                  ALOGE("Unsupported type: %c", rtype_char_);
+                  ret_type_ = RET_TYPE_UNKNOW;
+              }
+            }//case arm
+            case "arm64":{
+              for (int i = 0; i < nargs_; i++) {
+                  argtypes_[i] = type_to_ffi(signature[i+1]);
+                  if (! argtypes_[i])
+                    return;
+                  switch (signature[i+1]) { //check target type, if in 64host-32guest, check argtypes_[i]->size to handle thunk
+                    case 'v': //void TODO: should not reach here
+                      break;
+                    case 'c': //char
+                    case 'C': //uchar
+                    case 's'; //short
+                    case 'S': //ushort
+                    case 'i': //int
+                    case 'I': //uint
+                    case 'l': //int64
+                    case 'L': //uint64
+                      if (int_regs_used_ < 8) {
+                        arg_store_type_[i] = ARG_TYPE_INT64_REG;
+                        arg_store_offsets_[i] = int_regs_used_;
+                        int_regs_used_++;
+                      }else{
+                        arg_store_type_[i] = ARG_TYPE_STACK64;
+                        arg_store_offsets_[i] = stacksize_;
+                        stacksize_ += 8;
+                      }
+                      break;
+                    case 'f': //float
+                    case 'd': //double
+                      if (float_regs_used_ < 8) {
+                        arg_store_type_[i] = ARG_TYPE_FLOAT128_REG_LOW; //although we use this struct, we will check its size to asign value
+                        arg_store_offsets_[i] = float_regs_used_;
+                        float_regs_used_++;
+                      }else{
+                        arg_store_type_[i] = ARG_TYPE_STACK64;
+                        arg_store_offsets_[i] = stacksize_;
+                        stacksize_ += 8;
+                      }
+                      break;
+                    case 'p': //pointer
+                      if (int_regs_used_ < 8) {
+                        arg_store_type_[i] = ARG_TYPE_INT64_REG_PTR;
+                        arg_store_offsets_[i] = int_regs_used_;
+                        int_regs_used_++;
+                      }else{
+                        arg_store_type_[i] = ARG_TYPE_STACK64_PTR;
+                        arg_store_offsets_[i] = stacksize_;
+                        stacksize_ += 8;
+                      }
+                      break;
+                    default:
+                      //TODO: handle other type and struct
+                      //when size is over 8, regs need alignment, this may skip regs
+                  }//switch sig
+              }//for arg
+              //alignment in stack is 8, if bigger then align bigger
+              //prepare ret_type_ in arm64
+              switch(rtype_char_){
+                case 'v': //void
+                  ret_type_ = RET_TYPE_VOID;
+                  break;
+                case 'c': //char
+                case 'C': //uchar
+                case 's'; //short
+                case 'S': //ushort
+                case 'i': //int
+                case 'I': //uint
+                  ret_type_ = RET_TYPE_INT_REG_32;
+                  break;
+                case 'l': //int64
+                case 'L': //uint64
+                case 'p': //pointer
+                  ret_type_ = RET_TYPE_INT_REG_64;
+                  break;
+                case 'f': //float
+                  ret_type_ = RET_TYPE_FLOAT_REG_32;
+                  break;
+                case 'd': //double
+                  ret_type_ = RET_TYPE_FLOAT_REG_64;
+                  break;
+                default:
+                  ALOGE("Unsupported type: %c", rtype_char_);
+                  ret_type_ = RET_TYPE_UNKNOW;
+              }
+            }//case arm64
+            case "x86":{
+              //pure stack，alignment in stack is 4, if bigger then align bigger
+              return;
+            }
+            case "x86_64":{
+              //when size is over 8, alignment in stack is still keep 8
+              return;
+            }
+            case "riscv64":{
+              //
+              return;
+            }
+            default:
+                //unknow arch
+              ALOGE("Cannot create trampoline for unknown GuestIsa: %s", GuestIsa);
+              return;
+          }//switch isa
+
+/*
           for (int i = 0, nregs = __LP64__ ? 8 : 4; i < nargs_; i++) {
               argtypes_[i] = type_to_ffi(signature[i+1]);
               if (! argtypes_[i])
                 return;
               // Check valid size and attempt to use register(s)
+              // TODO: calling conventions about args
               switch (argtypes_[i]->size) {
                   case 8:
 #ifndef __LP64__
@@ -129,6 +488,7 @@ Trampoline::Trampoline(const std::string& name, intptr_t address, const std::str
                   case 1:
                     if (nregs) {
                         nregs--;
+
                         continue;
                     }
                     break;
@@ -157,12 +517,18 @@ Trampoline::Trampoline(const std::string& name, intptr_t address, const std::str
       else {
           ALOGE("Cannot create trampoline for unknown function: %s", name.c_str());
       }
+*/
 
-      if (rtype_) {
-          if (ffi_prep_cif(&cif_, FFI_DEFAULT_ABI, nargs_, rtype_, argtypes_) == FFI_OK) {
-              if (ffi_prep_closure_loc(closure_, &cif_, Trampoline::call_trampoline, this, code_address) == FFI_OK) {
-                  host_address_ = code_address;
-              }
+      //create key for call data and ret
+      //TODO: check success
+      pthread_key_create(&call_data_key_, &destructor_call_data);
+      pthread_key_create(&call_ret_key_, &destructor_call_ret);
+
+      //build cif
+      if (ffi_prep_cif(&cif_, FFI_DEFAULT_ABI, nargs_, rtype_, argtypes_) == FFI_OK) {
+        //build closure
+          if (ffi_prep_closure_loc(closure_, &cif_, Trampoline::call_trampoline, this, code_address) == FFI_OK) {
+              host_address_ = code_address;
           }
       }
   }
@@ -172,96 +538,159 @@ Trampoline::~Trampoline()
 {
   ffi_closure_free(closure_);
   free(argtypes_);
-  free(stackoffsets_);
+  free(arg_store_type_);
+  free(arg_store_offsets_);
+  //free(stackoffsets_);
+  pthread_key_delete(call_data_key_);
+  pthread_key_delete(call_ret_key_);
 }
 
+//return the tramp address build from ffi
 void *Trampoline::get_handle() const
 {
   return reinterpret_cast<void *>(host_address_);
 }
 
+//static function: redirect to the parent class function "call", this is prepare for ffi to build a tramp func
 void Trampoline::call_trampoline(ffi_cif *cif, void *ret, void **args, void *self)
 {
   reinterpret_cast<Trampoline *>(self)->call(ret, args);
 }
 
+//virtual function: perform a call through QemuAndroid, require return type signature
 void Trampoline::call(void *ret, void **args)
 {
   ALOGV("Trampoline[%s] -- START", name_.c_str());
+  //### ### ### ### ### ###
+  //get call and ret data
+  QemuAndroidCallData *call_data = get_call_data();
+  QemuAndroidCallRet *call_ret = get_call_ret();
 
-  intptr_t regs[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-  char *stack = nullptr;
-  int rindex = 0;
-  int nregargs = nargs_ - nstackargs_;
-
-  if (stacksize_) {
-      stack = reinterpret_cast<char *>(calloc(stacksize_, 1));
-      for (int i = nregargs; i < nargs_; i++) {
-          void *arg = get_call_argument(i, args[i]);
-          if (argtypes_[i]->size <= 4)
-            *(uint32_t*)(&stack[stackoffsets_[i - nregargs]]) = *(uint32_t *)arg;
-          else
-            *(uint64_t*)(&stack[stackoffsets_[i - nregargs]]) = *(uint64_t *)arg;
-      }
-  }
-
-  for (int i = 0; i < nregargs; i++) {
+  //copy args
+  for (int i = 0; i < nargs_; i++ ) {
+      //get handled arg
       void *arg = get_call_argument(i, args[i]);
-#ifdef __LP64__
-        regs[rindex++] = *(uint64_t *)arg;
-#else
-      if (argtypes_[i]->size <= 4) {
-        regs[rindex++] = *(uint32_t *)arg;
-      } else {
-          rindex = rindex ? 2 : 0;
-          *(uint64_t *)(&regs[rindex]) = *(uint64_t *)arg;
-          rindex += 2;
+      switch(arg_store_type_[i]){
+        case ARG_TYPE_INT32_REG:
+          call_data->int32_regs[arg_store_offsets_[i]] = *(uint32_t *)arg;
+          break;
+        case ARG_TYPE_INT32_REG_DOUBLE:
+          *(uint64_t *)(&(call_data->int32_regs[arg_store_offsets_[i]])) = *(uint64_t *)arg;
+          break;
+        case ARG_TYPE_INT32_REG_PTR:
+          call_data->int32_regs[arg_store_offsets_[i]] = QemuCore::h2g(*(uintptr_t *)arg);
+          break;
+        case ARG_TYPE_INT64_REG:
+          call_data->int64_regs[arg_store_offsets_[i]] = *(uint64_t *)arg;
+          break;
+        case ARG_TYPE_INT64_REG_DOUBLE:
+          memcpy(&(call_data->int64_regs[arg_store_offsets_[i]]), arg, 16);//little-endian
+          break;
+        case ARG_TYPE_INT64_REG_PTR:
+          call_data->int64_regs[arg_store_offsets_[i]] = QemuCore::h2g(*(uintptr_t *)arg);
+          break;
+        case ARG_TYPE_FLOAT32_REG:
+          call_data->float32_regs[arg_store_offsets_[i]] = *(uint32_t *)arg;
+          break;
+        case ARG_TYPE_FLOAT32_REG_DOUBLE:
+          *(uint64_t *)(&(call_data->float32_regs[arg_store_offsets_[i]])) = *(uint64_t *)arg;
+          break;
+        case ARG_TYPE_FLOAT64_REG:
+          call_data->float64_regs[arg_store_offsets_[i]] = *(uint64_t *)arg;
+          break;
+        case ARG_TYPE_FLOAT64_REG_DOUBLE:
+          memcpy(&(call_data->float64_regs[arg_store_offsets_[i]]), arg, 16);//little-endian
+          break;
+        case ARG_TYPE_FLOAT128_REG:
+          memcpy(&(call_data->float128_regs[arg_store_offsets_[i]]), arg, 16);//little-endian
+          break;
+        case ARG_TYPE_FLOAT128_REG_LOW:
+          call_data->float128_regs[arg_store_offsets_[i]].low = *(uint64_t *)arg;
+          break;
+        case ARG_TYPE_STACK32:
+          *(uint32_t*)(&(call_data->stack[arg_store_offsets_[i]])) = *(uint32_t *)arg;
+          break;
+        case ARG_TYPE_STACK64:
+          *(uint64_t*)(&(call_data->stack[arg_store_offsets_[i]])) = *(uint64_t *)arg;
+          break;
+        case ARG_TYPE_STACK128:
+          memcpy(&(call_data->stack[arg_store_offsets_[i]]), arg, 16);
+          break;
+        case ARG_TYPE_STACK32_PTR:
+          *(uint32_t*)(&(call_data->stack[arg_store_offsets_[i]])) = QemuCore::h2g(*(uintptr_t *)arg);
+          break;
+        case ARG_TYPE_STACK64_PTR:
+          *(uint64_t*)(&(call_data->stack[arg_store_offsets_[i]])) = QemuCore::h2g(*(uintptr_t *)arg);
+          break;
+        case ARG_TYPE_STACK_COMPLEX:
+          //
+        case ARG_TYPE_INT32_AND_STACK:
+          //
+        case ARG_TYPE_INT64_SPLIT_STACK:
+          //
+        case ARG_TYPE_UNKNOW:
+        default:
+          ALOGE("Cannot call trampoline for unknown ARG_TYPE: %d", arg_store_type_[i]);
       }
-#endif
   }
 
-  if (rtype_->size == 8) {
-      uint64_t result = QemuCpu::get()->call64(address_, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6], regs[7], stack, stacksize_);
+  //perform call
+  QemuCpu::get()->call(address_, call_data, call_ret);
 
-      ALOGV("Trampoline[%s] -- END => %016llx", name_.c_str(), result);
-      *((uint64_t *)ret) = result;
+  //process return
+  switch (rtype_char_) {
+    case 'v': //void
+        break;
+    case 'c': //char
+    case 'C': //uchar
+        *((uint8_t *)ret) = call_ret->int32_ret & 0xff;
+        break;
+    case 's'; //short
+    case 'S': //ushort
+        *((uint16_t *)ret) = call_ret->int32_ret & 0xffff;
+        break;
+    case 'i': //int
+    case 'I': //uint
+    case 'f': //float
+        *((uint32_t *)ret) = call_ret->int32_ret;
+        break;
+    case 'l': //int64
+    case 'L': //uint64
+    case 'd': //double
+        *((uint64_t *)ret) = call_ret->int64_ret;
+        break;
+    case 'p': //pointer
+        if (arch_values[GuestIsa].target_64_bit){
+            *((uintptr_t *)ret) = (uintptr_t)QemuCore::g2h(call_ret->int64_ret);
+        }else{
+            *((uintptr_t *)ret) = (uintptr_t)QemuCore::g2h(call_ret->int32_ret);
+        }
+        break;
+    default:
+        ALOGE("Cannot call trampoline for unknown rtype: %c", rtype_char_);
   }
-  else {
-      intptr_t result = QemuCpu::get()->call(address_, regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6], regs[7], stack, stacksize_);
 
-      if (rtype_ == &ffi_type_void) {
-          ALOGV("Trampoline[%s] -- END", name_.c_str());
-      }
-      else {
-          ALOGV("Trampoline[%s] -- END => %08x [%d]", name_.c_str(), result, rtype_->size);
-          switch (rtype_->size) {
-            case 1:
-              *((uint8_t *)ret) = result & 0xff;
-              break;
-            case 2:
-              *((uint16_t *)ret) = result & 0xffff;
-              break;
-            default:
-              *((uint32_t *)ret) = result;
-              break;
-          }
-      }
-  }
+  ALOGV("Trampoline[%s] -- END", name_.c_str());//TODO: print call ret directly
 
-  free(stack);
+  //### ### ### ### ### ###
 }
 
+//virtual function: nothing to do here, just return the arg back
 void *Trampoline::get_call_argument(int index, void *arg)
 {
   return arg;
 }
 
+/******  JNITrampoline  ******/
+
+//when reset to JNITrampoline, define tramp and shorty for this object
 JNITrampoline::JNITrampoline(const std::string& name, intptr_t address, const std::string& shorty)
      : Trampoline(name, address, shorty_to_signature(shorty)),
        shorty_(shorty)
 {
 }
 
+//jni_env
 void *JNITrampoline::get_call_argument(int index, void *arg)
 {
   switch (index) {
@@ -272,11 +701,14 @@ void *JNITrampoline::get_call_argument(int index, void *arg)
   }
 }
 
+/******  JNILoadTrampoline  ******/
+//when reset to JNILoadTrampoline, define the load type
 JNILoadTrampoline::JNILoadTrampoline(const std::string& name, intptr_t address)
      : Trampoline(name, address, name == "JNI_OnLoad" ? "ipp" : "vpp")
 {
 }
 
+//java_vm
 void *JNILoadTrampoline::get_call_argument(int index, void *arg)
 {
   switch (index) {
@@ -287,6 +719,9 @@ void *JNILoadTrampoline::get_call_argument(int index, void *arg)
   }
 }
 
+/******  GuestNativeActivity  ******/
+
+//TODO: copy aosp header
 #include "/home/Mis012/Github_and_other_sources/android_translation_layer/src/api-impl-jni/native_activity.h"
 
 #define CALLBACK_ONSTART                        0
@@ -369,9 +804,11 @@ static void GuestNativeActivity_onDestroy(ANativeActivity *activity)
       ALOGI("GuestNativeActivity_onDestroy");
       QemuCpu::get()->call(callback, (intptr_t) activity->instance);
   }
-  qemu_android_free((intptr_t) activity->instance);
+  QemuCore::free((intptr_t) activity->instance);
   activity->instance = nullptr;
 }
+
+/******  NativeActivityTrampoline  ******/
 
 NativeActivityTrampoline::NativeActivityTrampoline(const std::string& name, intptr_t address)
      : Trampoline(name, address, "vppI")
@@ -381,7 +818,7 @@ NativeActivityTrampoline::NativeActivityTrampoline(const std::string& name, intp
 void NativeActivityTrampoline::call(void *ret, void **args)
 {
   ANativeActivity *host_activity = *(ANativeActivity **)args[0];
-  intptr_t guest_activity_p = qemu_android_malloc(sizeof(GuestNativeActivity));
+  intptr_t guest_activity_p = QemuCore::malloc(sizeof(GuestNativeActivity));
 
   // Setup host ANativeActivity
   host_activity->instance = (void *) guest_activity_p;
@@ -408,12 +845,12 @@ void NativeActivityTrampoline::call(void *ret, void **args)
       GuestNativeActivity *guest_activity = guest_activity_r.get();
 
       guest_activity->assetManager = host_activity->assetManager;
-      guest_activity->callbacks = (ANativeActivityCallbacks *) qemu_android_h2g(&guest_activity->callbacks_);
+      guest_activity->callbacks = (ANativeActivityCallbacks *) QemuCore::h2g(&guest_activity->callbacks_);
       guest_activity->clazz = host_activity->clazz;
       guest_activity->env = (JNIEnv *) JavaBridge::wrap_jni_env(host_activity->env);
-      guest_activity->externalDataPath = (const char *) qemu_android_h2g((void *) host_activity->externalDataPath);
-      guest_activity->internalDataPath = (const char *) qemu_android_h2g((void *) host_activity->internalDataPath);
-      guest_activity->obbPath = (const char *) qemu_android_h2g((void *) host_activity->obbPath);
+      guest_activity->externalDataPath = (const char *) QemuCore::h2g((void *) host_activity->externalDataPath);
+      guest_activity->internalDataPath = (const char *) QemuCore::h2g((void *) host_activity->internalDataPath);
+      guest_activity->obbPath = (const char *) QemuCore::h2g((void *) host_activity->obbPath);
       guest_activity->sdkVersion = host_activity->sdkVersion;
       guest_activity->vm = (JavaVM *) JavaBridge::wrap_java_vm(host_activity->vm);
 
